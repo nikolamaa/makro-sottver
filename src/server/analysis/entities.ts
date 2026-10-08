@@ -75,7 +75,7 @@ function capitalizedMidSentence(ctx: Ctx, raw: string, start: number): boolean {
 const EMAIL_RE = /\b[a-z0-9][a-z0-9._%+-]{0,63}@[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63}){0,8}\.[a-z]{2,24}\b/gi;
 const URL_RE = /\b(?:https?:\/\/|www\.)[^\s<>"'`]+/gi;
 const BARE_DOMAIN_RE =
-  /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.){1,6}(?:com|net|org|io|bet|casino|gg|co|us|uk|app|ly|info|tv|xyz|games|eu)\b(?:\/[^\s<>"'`]*)?/gi;
+  /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.){1,6}(com|net|org|io|bet|casino|gg|co|us|uk|app|ly|info|tv|xyz|games|eu)\b(?:\/[^\s<>"'`]*)?/gi;
 const TRAILING_PUNCT_RE = /[.,!?;:)\]}'"’”]+$/;
 
 function extractContacts(ctx: Ctx): void {
@@ -83,13 +83,24 @@ function extractContacts(ctx: Ctx): void {
     const start = m.index ?? 0;
     add(ctx, 'email', m[0].toLowerCase(), start, start + m[0].length);
   }
-  for (const re of [URL_RE, BARE_DOMAIN_RE]) {
-    for (const m of ctx.text.matchAll(re)) {
-      const raw = m[0].replace(TRAILING_PUNCT_RE, '');
-      const start = m.index ?? 0;
-      add(ctx, 'url', raw, start, start + raw.length);
-    }
+  for (const m of ctx.text.matchAll(URL_RE)) addUrl(ctx, m);
+  for (const m of ctx.text.matchAll(BARE_DOMAIN_RE)) {
+    if (!gluedSentence(m[0], m[1] ?? '')) addUrl(ctx, m);
   }
+}
+
+function addUrl(ctx: Ctx, m: RegExpMatchArray): void {
+  const raw = m[0].replace(TRAILING_PUNCT_RE, '');
+  const start = m.index ?? 0;
+  add(ctx, 'url', raw, start, start + raw.length);
+}
+
+const UPPER_ASCII_RE = /[A-Z]/;
+const LOWER_ASCII_RE = /[a-z]/;
+
+/** "tried again.Games keep crashing": a missing space after a period, not a domain (a capitalized TLD gives it away). */
+function gluedSentence(raw: string, tld: string): boolean {
+  return UPPER_ASCII_RE.test(tld) && LOWER_ASCII_RE.test(raw);
 }
 
 const TX_HASH_RE = /\b(?:0x)?[a-f0-9]{64}\b/gi;
@@ -199,14 +210,20 @@ const SAFE_CODE_SRC = codeKeys
   .join('|');
 const SYMBOL_SRC = Object.keys(SYMBOLS).sort(byLengthDesc).map(escapeRegExp).join('|');
 
-const NUM_SRC = String.raw`(?:\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d{1,3}(?:\.\d{3})+,\d+|\d{1,3}(?:\.\d{3}){2,}|\d+(?:[.,]\d+)?)(?:k(?![a-z]))?`;
+const NUM_SRC = String.raw`(?:\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d{1,3}(?:[ \u00A0\u202F]\d{3})+(?:[.,]\d+)?(?!\d|[.,]\d)|\d{1,3}(?:\.\d{3})+,\d+|\d{1,3}(?:\.\d{3}){2,}|\d+(?:[.,]\d+)?)(?:k(?![a-z]))?`;
 
 const SYMBOL_AMOUNT_RE = new RegExp(`(?<![a-z0-9])(${SYMBOL_SRC})\\s?(${NUM_SRC})(?![\\w])`, 'gid');
 const AMOUNT_SYMBOL_RE = new RegExp(`(?<![\\w.,])(${NUM_SRC})\\s?([$€£₹¥₺₦₩])`, 'gid');
 const AMOUNT_CODE_RE = new RegExp(`(?<![\\w.,])(${NUM_SRC})\\s?(${CODE_SRC})(?![a-z0-9])`, 'gid');
 const CODE_AMOUNT_RE = new RegExp(`\\b(${SAFE_CODE_SRC})\\s?(${NUM_SRC})(?!\\w|[.,]\\d)`, 'gid');
+/**
+ * What may follow a bare number after a money verb for it to count as an amount ("deposited 500 yesterday",
+ * "won 2k on dice"): the end, punctuation, a currency, or a function word - never a counted noun ("lost 2 bets").
+ */
+const AMOUNT_FOLLOWER_SRC = String.raw`on|in|into|onto|to|from|at|and|but|or|via|with|using|through|for|so|yesterday|today|tonight|earlier|ago|last|this|that|which|it|already|just|now|then|when|since|after|before|i|i'm|im|my|me|bucks|quid|worth|total|back|out|over|yet|still|is|was|has|had|but`;
 const VERB_AMOUNT_RE = new RegExp(
-  String.raw`\b(?:deposit(?:ed)?|withdr(?:aw|ew|awn)|cash(?:ed)?\s?out|sent|send|paid|transferred|won|lost|wagered|put|placed|staked|bet|balance(?:\s+(?:of|is|was))?|amount(?:\s+(?:of|is|was))?)\s+(?:of\s+|about\s+|around\s+|like\s+|~)?(${NUM_SRC})(?![\w.,%:/-]|\s*(?:x|times|days?|hours?|hrs?|h|mins?|minutes?|weeks?|months?|years?|%)\b)`,
+  String.raw`\b(?:deposit(?:ed)?|withdr(?:aw|ew|awn)|cash(?:ed)?\s?out|sent|send|paid|transferred|won|lost|wagered|put|placed|staked|bet|balance(?:\s+(?:of|is|was))?|amount(?:\s+(?:of|is|was))?)\s+(?:of\s+|about\s+|around\s+|like\s+|~)?(${NUM_SRC})` +
+    String.raw`(?=\s*$|\s*[!?;)\]\n]|[.,](?!\d)|\s*[$€£₹¥₺₦₩]|\s+(?:${AMOUNT_FOLLOWER_SRC}|${CODE_SRC})(?![\w'’]))`,
   'gid',
 );
 const CODE_WORD_RE = new RegExp(`\\b(${CODE_SRC})\\b`, 'gi');
@@ -472,6 +489,8 @@ function durationValue(countRaw: string, unitRaw: string): string | null {
   const unit = canonicalUnit(unitRaw);
   if (!unit) return null;
   const word = collapseWhitespace(countRaw.toLowerCase());
+  // "a second deposit" is an ordinal, not a duration.
+  if (unit[1] === 'second' && (word === 'a' || word === 'an')) return null;
   if (VAGUE_COUNTS[word] !== undefined) return `${word.replace(LEADING_ARTICLE_RE, '')} ${unit[1]}s`;
   const n = NUMBER_WORDS[word] ?? Number(word.replace(',', '.'));
   if (!Number.isFinite(n)) return null;
@@ -529,14 +548,19 @@ function extractTime(ctx: Ctx): void {
 // ---------------------------------------------------------------------------
 
 const USERNAME_RE =
-  /\b(?:my\s+)?(?:stake\s+)?(?:user\s?name|user\s?id|nick\s?name|handle)\b(\s+(?:is|was)\s+|\s*[:=–-]\s*|\s+)["'“]?(@?[a-z0-9][a-z0-9_.-]{1,31})/gid;
+  /\b(?:(?:my\s+)?(?:stake\s+)?(?:user\s?name|user\s?id|nick\s?name)|my\s+(?:stake\s+)?handle)\b(\s+(?:is|was)\s+|\s*[:=–-]\s*|\s+)["'“]?(@?[a-z0-9][a-z0-9_.-]{1,31})/gid;
 const ACCOUNT_HANDLE_RE = /\b(?:my\s+)?(?:stake\s+)?account(?:\s+name)?\b(\s+is\s+|\s*[:=]\s*|\s+)(@?[a-z0-9][a-z0-9_.-]{2,31})/gid;
 const TRAILING_DOTS_DASHES_RE = /[.-]+$/;
 const LETTER_RE = /[a-z]/i;
 const DIGIT_OR_UNDERSCORE_RE = /[\d_]/;
 const CAMEL_CASE_RE = /[a-z][A-Z]/;
 const INNER_DOT_RE = /.\../;
-const NOT_A_HANDLE = new Set(['changed', 'change', 'reset', 'password', 'email', 'login', 'locked', 'blocked', 'banned', 'and', 'or', 'not', 'please']);
+/** Words that follow "username is ..." without being a username ("my username is wrong"). */
+const NOT_A_HANDLE = new Set(
+  `changed change reset password email login locked blocked banned and or not please wrong incorrect invalid different
+  taken missing showing shown correct right gone weird strange empty unavailable visible hidden disabled suspended deleted
+  fine ok okay same also still already displayed spelled misspelled public private case sensitive`.split(/\s+/),
+);
 
 function isHandleLike(token: string): boolean {
   if (token.startsWith('@')) return true;
@@ -598,8 +622,12 @@ function leadingName(phrase: string): string | null {
 const NAME_PHRASE_SRC = String.raw`([\p{L}'’-]+(?:[ \t]+[\p{L}'’-]+){0,2})`;
 const MY_NAME_RE = new RegExp(String.raw`\bmy name is\s+${NAME_PHRASE_SRC}`, 'giud');
 const THIS_IS_RE = new RegExp(String.raw`\bthis is\s+([\p{L}'’-]+(?:[ \t]+[\p{L}'’-]+)?)\s+here\b`, 'giud');
+/**
+ * Sign-off before a name at the very end ("Thanks, John", "Regards,\nJohn Smith"). Words that are also ordinary
+ * English ("best", "yours") only count when punctuation or a line break separates them from the name.
+ */
 const SIGNOFF_RE = new RegExp(
-  String.raw`(?:^|[\s.!?,])(?:thanks|thank you|thank u|thx|ty|many thanks|regards|best regards|kind regards|warm regards|best|cheers|sincerely|yours|respectfully)(?:\s+(?:in advance|again|so much|a lot|for (?:the|your) help))?\s*[,!.:;\-–—]*\s+${NAME_PHRASE_SRC}\s*[.!]*\s*$`,
+  String.raw`(?:^|[\s.!?,])(?:(?:thanks|thank you|thank u|thx|ty|many thanks|regards|best regards|kind regards|warm regards|cheers)(?:\s+(?:in advance|again|so much|a lot|for (?:the|your) help))?\s*[,!.:;\-–—]*\s+|(?:best|sincerely|yours|respectfully)\s*[,!.:;\-–—\n]\s*)${NAME_PHRASE_SRC}\s*[.!]*\s*$`,
   'iud',
 );
 const SIGNOFF_WINDOW = 120;
