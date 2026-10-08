@@ -1,0 +1,93 @@
+/**
+ * JSON import reader. Accepted shapes:
+ *  - MacroPilot export: {format: 'macropilot-macros', version: 1, categories: [{id, name, color}], macros: [...]}
+ *  - {macros: [...]} (optionally with the same categories list)
+ *  - a bare array of macro objects
+ *  - a single macro object
+ * Macro keys use the shared synonyms (title|name, body|text|content, ...). The category is the macro's
+ * `category` name when present, otherwise its `categoryId` resolved through the categories list.
+ */
+import { EXPORT_FORMAT, EXPORT_VERSION } from './exportFormat.js';
+import { normalizeKey, resolveFields } from './fields.js';
+import type { ImportField } from './fields.js';
+import { isRecord } from './normalize.js';
+import type { RawMacro, SourceRead } from './normalize.js';
+import type { ProblemLog } from './problems.js';
+
+const empty = (): SourceRead => ({ raws: [], native: false });
+
+/** Read macros from JSON text; structural problems are reported to `log`. */
+export function readJson(text: string, log: ProblemLog): SourceRead {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch (err) {
+    log.add(`The JSON could not be read: ${err instanceof Error ? err.message : String(err)}`);
+    return empty();
+  }
+  if (Array.isArray(data)) return { raws: toRawMacros(data, new Map(), log), native: false };
+  if (!isRecord(data)) {
+    log.add('The JSON must be a list of macros or an object with a "macros" list.');
+    return empty();
+  }
+
+  const native = data.format === EXPORT_FORMAT;
+  if (native && data.version !== undefined && data.version !== EXPORT_VERSION) {
+    log.add(`Unsupported export version ${String(data.version)}; this app reads version ${EXPORT_VERSION}.`);
+    return empty();
+  }
+  if (!('macros' in data)) {
+    if (!native) return { raws: toRawMacros([data], new Map(), log), native: false };
+    log.add('The export file has no "macros" list.');
+    return empty();
+  }
+  if (!Array.isArray(data.macros)) {
+    log.add('"macros" must be a list.');
+    return empty();
+  }
+  return { raws: toRawMacros(data.macros, categoryNames(data.categories), log), native };
+}
+
+/** id -> name for a `categories: [{id, name}]` list; anything malformed is ignored. */
+function categoryNames(categories: unknown): Map<string, string> {
+  const names = new Map<string, string>();
+  if (!Array.isArray(categories)) return names;
+  for (const category of categories) {
+    if (isRecord(category) && typeof category.id === 'string' && typeof category.name === 'string') {
+      names.set(category.id, category.name);
+    }
+  }
+  return names;
+}
+
+function toRawMacros(entries: readonly unknown[], categories: ReadonlyMap<string, string>, log: ProblemLog): RawMacro[] {
+  const raws: RawMacro[] = [];
+  entries.forEach((entry, i) => {
+    const label = `Item ${i + 1}`;
+    if (!isRecord(entry)) {
+      log.add(`${label}: expected an object with a title and body`);
+      return;
+    }
+    const values = pickFields(entry);
+    if (!hasText(values.category) && typeof entry.categoryId === 'string') {
+      values.category = categories.get(entry.categoryId) ?? null;
+    }
+    raws.push({ label, values });
+  });
+  return raws;
+}
+
+function pickFields(entry: Record<string, unknown>): Partial<Record<ImportField, unknown>> {
+  const keys = new Map<string, string>();
+  for (const key of Object.keys(entry)) {
+    const normalized = normalizeKey(key);
+    if (!keys.has(normalized)) keys.set(normalized, key);
+  }
+  const values: Partial<Record<ImportField, unknown>> = {};
+  for (const [field, key] of resolveFields(keys)) values[field] = entry[key];
+  return values;
+}
+
+function hasText(value: unknown): boolean {
+  return typeof value === 'string' && value.trim() !== '';
+}

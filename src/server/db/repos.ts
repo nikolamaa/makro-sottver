@@ -52,11 +52,14 @@ const iso = (at?: Date): string => (at ?? new Date()).toISOString();
 
 const titleCollator = new Intl.Collator('en', { sensitivity: 'base', numeric: true });
 
+/** The value when it is an array, otherwise an empty list (a stray string must not be iterated per character). */
+const listOf = (value: unknown): readonly unknown[] => (Array.isArray(value) ? value : []);
+
 /** Trims, drops empty entries and dedupes case-insensitively, keeping the first spelling and order. */
-function uniqueTrimmed(values: readonly unknown[] | undefined): string[] {
+function uniqueTrimmed(values: unknown): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const raw of values ?? []) {
+  for (const raw of listOf(values)) {
     if (typeof raw !== 'string') continue;
     const value = raw.trim();
     const folded = value.toLowerCase();
@@ -121,7 +124,7 @@ export function canonicalContent(input: MacroContent): MacroContent {
     body: trimmed(input.body),
     categoryId: nullableTrimmed(input.categoryId),
     tags: uniqueTrimmed(input.tags),
-    intents: [...new Set((input.intents ?? []).map(trimmed).filter(isIntent))],
+    intents: [...new Set(listOf(input.intents).map(trimmed).filter(isIntent))],
     triggers: uniqueTrimmed(input.triggers),
     notes: trimmed(input.notes),
     shortcut: trimmed(input.shortcut),
@@ -227,6 +230,7 @@ function factPayload(input: FactInput): FactPayload {
 /** last_checked_at after an explicit status change: unchecked means "never checked". */
 const checkedAtFor = (status: FactStatus, now: string): string | null => (status === 'unchecked' ? null : now);
 
+/** Macros with encrypted, versioned content and per-macro facts (macros, macro_versions, facts tables). */
 export class MacroRepo {
   private readonly stmt: (sql: string) => StatementSync;
 
@@ -515,6 +519,7 @@ function categoryName(value: unknown): string {
   return name;
 }
 
+/** Macro categories with encrypted name/color; names are unique case-insensitively. */
 export class CategoryRepo {
   private readonly stmt: (sql: string) => StatementSync;
 
@@ -655,8 +660,8 @@ function sanitizeLeaf(path: string, base: unknown, candidate: unknown): unknown 
     return rule.integer ? Math.round(clamped) : clamped;
   }
   if (typeof candidate === 'string') {
-    if (rule?.kind === 'enum') return rule.values.includes(candidate) ? candidate : undefined;
     const value = candidate.trim().slice(0, SETTINGS_STRING_MAX);
+    if (rule?.kind === 'enum') return rule.values.includes(value) ? value : undefined;
     return rule?.kind === 'string' && rule.required && !value ? undefined : value;
   }
   return candidate;
@@ -748,6 +753,7 @@ export class SettingsRepo {
 // Usage events
 // ---------------------------------------------------------------------------
 
+/** A usage event as read back from the database. */
 export interface StoredEvent extends UsageEventInput {
   uid: string;
   ts: string;
@@ -778,6 +784,7 @@ function sanitizeEvent(event: UsageEventInput): UsageEventInput {
 
 const eventAad = (uid: string): string => `events:${uid}`;
 
+/** Encrypted analytics events (whitelisted ids, numbers and enums only; never customer text). */
 export class EventRepo {
   private readonly stmt: (sql: string) => StatementSync;
 
@@ -800,10 +807,13 @@ export class EventRepo {
     );
   }
 
-  /** Events oldest first, optionally only those at/after `since` and/or of one type. */
+  /**
+   * Events oldest first (insertion order for equal timestamps), optionally only those at/after `since` and/or
+   * of one type. Ordering by (ts, rowid) follows idx_events_ts, so no sort step is needed.
+   */
   list(opts?: { since?: Date; type?: UsageEventType }): StoredEvent[] {
     const rows = this.stmt(
-      "SELECT uid, ts, payload FROM events WHERE ts >= :since AND (:type = '' OR type = :type) ORDER BY ts, uid",
+      "SELECT uid, ts, payload FROM events WHERE ts >= :since AND (:type = '' OR type = :type) ORDER BY ts, rowid",
     ).all({ since: opts?.since ? iso(opts.since) : '', type: opts?.type ?? '' }) as unknown as { uid: string; ts: string; payload: Uint8Array }[];
     return rows.map((row) => ({ ...this.cipher.decryptJson<UsageEventInput>(row.payload, eventAad(row.uid)), uid: row.uid, ts: row.ts }));
   }
@@ -822,6 +832,7 @@ export class EventRepo {
 
 const nonNegative = (value: number): number => (Number.isFinite(value) && value > 0 ? value : 0);
 
+/** Per-call LLM token and cost accounting used for the monthly budget (no prompt or reply text). */
 export class LlmUsageRepo {
   private readonly stmt: (sql: string) => StatementSync;
 

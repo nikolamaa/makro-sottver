@@ -1,0 +1,314 @@
+/* Settings controls. Uses design tokens from styles.css so light/dark themes work. */
+
+/* Section card --------------------------------------------------------------- */
+.st-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 18px;
+  scroll-margin-top: 72px;
+}
+.st-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.st-card-header h2 {
+  margin: 0;
+  font-size: 15px;
+}
+.st-card-header h2:focus {
+  outline: none;
+}
+.st-card-desc {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+.st-card-body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Rows ------------------------------------------------------------------------ */
+.st-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 300px);
+  align-items: center;
+  gap: 8px 20px;
+  padding: 11px 0;
+  border-top: 1px solid var(--border);
+}
+.st-card-body > .st-row:first-child,
+.st-card-body > .st-sub:first-child > .st-row:first-child {
+  border-top: 0;
+}
+.st-row-wide {
+  grid-template-columns: minmax(0, 1fr);
+}
+.st-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.st-row-label {
+  font-weight: 600;
+  font-size: 13.5px;
+}
+.st-row-hint {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.st-row-control {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.st-row-wide .st-row-control {
+  justify-content: flex-start;
+}
+.st-row.is-disabled {
+  opacity: 0.6;
+}
+
+/* Inputs ---------------------------------------------------------------------- */
+.st-input-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+}
+.st-input-wrap input[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+.st-input-error {
+  font-size: 12px;
+  color: var(--danger);
+}
+.st-number {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.st-number input {
+  width: 110px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.st-affix {
+  color: var(--muted);
+  font-size: 13px;
+}
+.st-row-control select {
+  width: 100%;
+}
+
+/* Switch ---------------------------------------------------------------------- */
+.st-switch {
+  position: relative;
+  display: inline-flex;
+  width: 38px;
+  height: 22px;
+  flex: none;
+}
+.st-switch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+.st-switch input:disabled {
+  cursor: not-allowed;
+}
+.st-switch-track {
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  transition: background 0.12s, border-color 0.12s;
+  display: flex;
+  align-items: center;
+  padding: 2px;
+}
+.st-switch-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  transition: transform 0.12s;
+}
+.st-switch input:checked + .st-switch-track {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.st-switch input:checked + .st-switch-track .st-switch-thumb {
+  transform: translateX(16px);
+  background: var(--accent-contrast);
+}
+.st-switch input:focus-visible + .st-switch-track {
+  box-shadow: var(--focus);
+}
+
+/* Radio cards ----------------------------------------------------------------- */
+.st-radio-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+  padding: 6px 0 10px;
+}
+.st-radio-card {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color 0.1s, background 0.1s;
+}
+.st-radio-card:hover {
+  border-color: var(--accent);
+}
+.st-radio-card.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.st-radio-card-input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+}
+.st-radio-card:has(.st-radio-card-input:focus-visible) {
+  box-shadow: var(--focus);
+}
+.st-radio-card-dot {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--surface);
+}
+.st-radio-card.is-selected .st-radio-card-dot {
+  border-color: var(--accent);
+  background: radial-gradient(circle, var(--accent) 0 4px, var(--surface) 4.5px);
+}
+.st-radio-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.st-radio-card-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-weight: 600;
+}
+.st-radio-card-subtitle {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.st-radio-card-desc {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+/* Segmented ------------------------------------------------------------------- */
+.st-segmented {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.st-segment {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.st-segment input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+}
+.st-segment:hover {
+  color: var(--text);
+}
+.st-segment.is-selected {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.12);
+}
+.st-segment:has(input:focus-visible) {
+  box-shadow: var(--focus);
+}
+
+/* Meter ----------------------------------------------------------------------- */
+.st-meter {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.st-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--success);
+  transition: width 0.2s;
+}
+.st-meter-warning .st-meter-fill {
+  background: var(--warning);
+}
+.st-meter-danger .st-meter-fill {
+  background: var(--danger);
+}
+
+@media (max-width: 640px) {
+  .st-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .st-row-control {
+    justify-content: flex-start;
+  }
+  .st-number {
+    justify-content: flex-start;
+  }
+  .st-toggle-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .st-toggle-row .st-row-control {
+    justify-content: flex-end;
+  }
+}

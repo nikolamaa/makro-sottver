@@ -85,6 +85,16 @@ describe('canonicalContent', () => {
     });
     expect(Object.keys(c)).toEqual(['title', 'body', 'categoryId', 'tags', 'intents', 'triggers', 'notes', 'shortcut']);
   });
+
+  it('treats non-array list fields as empty instead of splitting strings or crashing', () => {
+    const c = canonicalContent(macroInput({ tags: 'vip' as never, intents: 'general' as never, triggers: undefined as never }));
+    expect(c).toMatchObject({ tags: [], intents: [], triggers: [] });
+  });
+
+  it('is idempotent, so the stored content fingerprints the same as LibraryService.keyOf', () => {
+    const once = canonicalContent(macroInput({ tags: [' A ', 'a', 'B'], intents: ['general', 'general'] }));
+    expect(canonicalContent(once)).toEqual(once);
+  });
 });
 
 describe('MetaRepo', () => {
@@ -213,6 +223,33 @@ describe('MacroRepo', () => {
     expect(count('facts', m.id)).toBe(0);
     expect(count('facts', keep.id)).toBe(1);
     expect(repo.listAll().map((x) => x.id)).toEqual([keep.id]);
+  });
+
+  it('cascades fact and macro deletes to fact checks and update proposals', () => {
+    const m = repo.create(macroInput({ facts: [fact({ key: 'a' }), fact({ key: 'b' })] }), 'create');
+    const [kept, dropped] = m.facts;
+    if (!kept || !dropped) throw new Error('facts missing');
+    const now = new Date().toISOString();
+    db.raw.prepare("INSERT INTO accuracy_runs (id, trigger, started_at, status) VALUES ('run1', 'manual', ?, 'running')").run(now);
+    const addCheck = db.raw.prepare(
+      "INSERT INTO fact_checks (id, run_id, fact_id, verdict, method, checked_at, payload) VALUES (?, 'run1', ?, 'verified', 'manual', ?, x'00')",
+    );
+    addCheck.run('check-kept', kept.id, now);
+    addCheck.run('check-dropped', dropped.id, now);
+    db.raw
+      .prepare(
+        "INSERT INTO update_proposals (id, macro_id, run_id, base_version, status, severity, created_at, payload) VALUES ('p1', ?, 'run1', 1, 'pending', 'minor', ?, x'00')",
+      )
+      .run(m.id, now);
+    const ids = (table: string) => (db.raw.prepare(`SELECT id FROM ${table} ORDER BY id`).all() as { id: string }[]).map((r) => r.id);
+
+    repo.replaceFacts(m.id, [fact({ id: kept.id, key: 'a' })]);
+    expect(ids('fact_checks')).toEqual(['check-kept']);
+
+    repo.hardDelete(m.id);
+    expect(ids('fact_checks')).toEqual([]);
+    expect(ids('update_proposals')).toEqual([]);
+    expect(ids('accuracy_runs')).toEqual(['run1']);
   });
 
   it('sorts listAll by title case-insensitively', () => {
@@ -439,6 +476,12 @@ describe('SettingsRepo', () => {
     expect(s).not.toHaveProperty('unknown');
   });
 
+  it('trims enum values before validating them', () => {
+    const s = repo.update({ ui: { theme: ' dark ' as never }, ai: { provider: 'ollama\n' as never } });
+    expect(s.ui.theme).toBe('dark');
+    expect(s.ai.provider).toBe('ollama');
+  });
+
   it('clamps numbers and trims/caps strings', () => {
     let s = repo.update({
       recommendation: { minConfidence: 150, maxResults: 7 },
@@ -508,6 +551,13 @@ describe('EventRepo', () => {
     expect(repo.list()).toHaveLength(2);
     expect(() => repo.purgeOlderThan(Number.NaN, now)).toThrow(/Retention days/);
     expect(() => repo.purgeOlderThan(-1, now)).toThrow(/Retention days/);
+  });
+
+  it('keeps insertion order for events with the same timestamp', () => {
+    const repo = new EventRepo(db, cipher);
+    const at = new Date('2026-10-08T12:00:00.000Z');
+    for (let rank = 0; rank < 25; rank++) repo.add({ type: 'recommendation_selected', rank }, at);
+    expect(repo.list().map((e) => e.rank)).toEqual(Array.from({ length: 25 }, (_, i) => i));
   });
 });
 
