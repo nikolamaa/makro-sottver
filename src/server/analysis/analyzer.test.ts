@@ -400,3 +400,100 @@ describe('analyzeMessage', () => {
     expect(avg).toBeLessThan(5);
   });
 });
+
+describe('review regressions', () => {
+  it('does not treat codes and acronyms (2FA, RTP, ETA, AML) as shouting', () => {
+    expect(detectSentiment('How do I set up 2FA?').sentiment).toBe('confused');
+    expect(detectSentiment('what is the RTP').sentiment).toBe('neutral');
+    expect(detectSentiment('My ETA for the withdrawal?').sentiment).toBe('neutral');
+    expect(detectSentiment('I sent BUSD and SHIB').sentiment).toBe('neutral');
+    expect(detectSentiment("Hi! I'd like to add 2FA before my next withdrawal").sentiment).toBe('neutral');
+  });
+
+  it('reads shouting and "!!!" in a purely positive message as enthusiasm, not anger', () => {
+    expect(detectSentiment('THANK YOU SO MUCH').sentiment).toBe('positive');
+    expect(detectSentiment('Great!!! no problem').sentiment).toBe('positive');
+    expect(detectSentiment('Thank you! I appreciate it!!!').sentiment).toBe('positive');
+    expect(detectSentiment('Thanks but WHERE IS MY MONEY').sentiment).toBe('angry');
+    expect(detectSentiment('Thanks!!! Why is my deposit not here').sentiment).toBe('angry');
+    expect(detectSentiment('WHERE IS MY MONEY').sentiment).toBe('angry');
+  });
+
+  it('does not make a thank-you urgent or a complaint', () => {
+    const a = analyzeMessage('Thank you so much!!!');
+    expect(a.sentiment).toBe('positive');
+    expect(a.urgency).toBe('low');
+    expect(a.intents).toEqual([{ intent: 'general', score: 0.3 }]);
+  });
+
+  it('does not count neutral "still possible" / "still have a question" as frustration', () => {
+    expect(detectSentiment('Is it still possible to claim?').sentiment).toBe('neutral');
+    expect(detectSentiment('I still have a question about rakeback').sentiment).toBe('neutral');
+    expect(detectSentiment('it is still not in my account').sentiment).toBe('frustrated');
+  });
+
+  it.each([
+    ["I've been playing on Stake for 2 years and never got a bonus", 'normal'],
+    ['I created my account 3 years ago, how do I change my email?', 'normal'],
+    ['I made my account 2 months ago, how do I get rakeback', 'normal'],
+    ['I am over 18 years old, why do you need my id', 'normal'],
+    ["I've been playing for the last 2 years", 'normal'],
+    ['My deposit is not showing for 2 days', 'high'],
+    ["it's been days and my withdrawal is not here", 'high'],
+    ['It has been 3 days since my withdrawal', 'high'],
+    ['I uploaded my documents 5 days ago', 'high'],
+    ['I withdrew 2 days ago and nothing', 'high'],
+    ['my withdrawal is 3 days pending', 'high'],
+    ['deposit sent 2 days and still nothing', 'high'],
+  ] as const)('only waits tied to an open request are long waits: %s -> %s', (text, urgency) => {
+    expect(analyzeMessage(text).urgency).toBe(urgency);
+  });
+
+  it.each([
+    ['I accidentally sent BTC to my ETH deposit address', 'deposit_missing'],
+    ['I want to exclude myself', 'responsible_gambling'],
+    ["it's been days and my withdrawal is not here", 'withdrawal_pending'],
+    ["I didn't get the verification code by sms", 'account_access'],
+    ['I want to change the email address on my account, how do I do that?', 'account_access'],
+    ["I can't access the site from my country", 'technical_issue'],
+    ['the live dealer stream keeps buffering', 'technical_issue'],
+  ] as const)('closes intent gaps: %s -> %s', (text, intent) => {
+    expect(intentsOf(text)[0]).toBe(intent);
+  });
+
+  it('does not count a verification code as a bonus code', () => {
+    expect(intentsOf("I didn't get the verification code by sms")).not.toContain('bonus_inquiry');
+    expect(intentsOf('where do I enter the bonus code?')[0]).toBe('bonus_inquiry');
+  });
+
+  it('flags self-exclusion wording as RG risk', () => {
+    expect(detectRgRisk('I want to exclude myself').risk).toBe(true);
+    expect(detectRgRisk('please block myself from the casino').risk).toBe(true);
+    expect(detectRgRisk('I self-excluded last year').risk).toBe(true);
+  });
+
+  it('keeps every bullet of a list as its own question', () => {
+    const q = splitQuestions("I have a few questions:\n- how do I deposit with card\n- what's the max withdrawal\n- do you have a mobile app");
+    expect(q.map((x) => x.text)).toEqual(['how do I deposit with card', "what's the max withdrawal", 'do you have a mobile app']);
+    expect(q.map((x) => x.intent)).toEqual(['deposit_help', 'withdrawal_limits', null]);
+  });
+
+  it('keeps topic-less follow-up questions with the context before them', () => {
+    expect(splitQuestions('I deposited 50 USDT yesterday. Where is my balance?')).toEqual([
+      { text: 'I deposited 50 USDT yesterday. Where is my balance?', intent: 'deposit_missing' },
+    ]);
+  });
+
+  it('drops a trailing "Thank you" from the last question', () => {
+    expect(splitQuestions('My withdrawal is stuck. It has been 3 days. Please respond. Thank you.')).toEqual([
+      { text: 'My withdrawal is stuck. It has been 3 days. Please respond.', intent: 'withdrawal_pending' },
+    ]);
+  });
+
+  it('detects short foreign messages with one known foreign word', () => {
+    expect(isLikelyNonEnglish('Merhaba bonusum gelmedi')).toBe(true);
+    expect(isLikelyNonEnglish('gracias amigo')).toBe(true);
+    expect(isLikelyNonEnglish('Diego Garcia Lopez')).toBe(false);
+    expect(isLikelyNonEnglish('Hola bro')).toBe(false);
+  });
+});

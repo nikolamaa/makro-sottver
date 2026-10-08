@@ -476,6 +476,19 @@ describe('SettingsRepo', () => {
     expect(s).not.toHaveProperty('unknown');
   });
 
+  it('accepts the AI double-check flag only as a boolean (default on, also for settings saved before it existed)', () => {
+    expect(repo.get().ai.rerank).toBe(true);
+    expect(repo.update({ ai: { rerank: false } }).ai.rerank).toBe(false);
+    for (const wrong of ['false', 0, 1, null, {}]) {
+      expect(repo.update({ ai: { rerank: wrong as never } }).ai.rerank).toBe(false);
+    }
+    expect(new SettingsRepo(db, cipher).get().ai.rerank).toBe(false);
+    expect(repo.update({ ai: { rerank: true } }).ai.rerank).toBe(true);
+
+    db.raw.prepare("UPDATE settings SET payload = ? WHERE key = 'app'").run(cipher.encryptJson({ ai: { provider: 'anthropic', autoPolish: true } }, 'settings:app'));
+    expect(repo.get().ai).toMatchObject({ provider: 'anthropic', autoPolish: true, rerank: true });
+  });
+
   it('trims enum values before validating them', () => {
     const s = repo.update({ ui: { theme: ' dark ' as never }, ai: { provider: 'ollama\n' as never } });
     expect(s.ui.theme).toBe('dark');

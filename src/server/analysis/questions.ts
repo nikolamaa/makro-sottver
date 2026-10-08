@@ -13,7 +13,7 @@
 import type { Intent, IntentScore, QuestionSpan } from '../../shared/types.js';
 import { prepare } from './concepts.js';
 import { scoreIntentsPrepared } from './intents.js';
-import { collapseWhitespace, STOPWORDS } from './text.js';
+import { collapseWhitespace } from './text.js';
 
 const MAX_QUESTIONS = 6;
 /** Bounds the work on pathological input (thousands of one-word lines); real messages have far fewer clauses. */
@@ -91,11 +91,6 @@ interface Segment extends Span {
   /** Mentions a problem ("not", "still", "wrong", "rejected"...). */
   problem: boolean;
   newTopic: boolean;
-  /**
-   * Can only be read together with a neighbour: it refers back ("what does that mean?") or has no content of its
-   * own ("Can you check?", "any update?").
-   */
-  followUp: boolean;
 }
 
 interface Group extends Span {
@@ -178,26 +173,7 @@ function toSegment(text: string, span: Span, newTopic: boolean): Segment {
     question: isQuestionOrRequest(p.norm),
     problem: PROBLEM_CUE_RE.test(p.norm),
     newTopic,
-    followUp: isFollowUp(p.norm),
   };
-}
-
-/** Words of a follow-up that carry no topic ("can you check asap", "any update on this?"). */
-const FOLLOW_UP_WORDS: ReadonlySet<string> = new Set(
-  `check checking help fix look respond reply answer update updates status asap urgent urgently possible soon quickly
-  quick sort resolve solve explain news eta long take takes taking mean means happening happened going wrong anyone
-  someone human agent question questions thing things few couple two three hurry done`.split(/\s+/),
-);
-const ANAPHORA_RE = /\b(?:it|this|that|these|those|they|them)\b/;
-const FOLLOW_UP_TOKEN_RE = /[a-z0-9]+(?:'[a-z]+)?/g;
-
-/** True when a clause refers back to something said before or has no topic words of its own. */
-function isFollowUp(norm: string): boolean {
-  if (ANAPHORA_RE.test(norm)) return true;
-  for (const m of norm.matchAll(FOLLOW_UP_TOKEN_RE)) {
-    if (!STOPWORDS.has(m[0]) && !FOLLOW_UP_WORDS.has(m[0])) return false;
-  }
-  return true;
 }
 
 /** A statement describing a problem with a clear topic ("my withdrawal is pending for 2 days"). */
@@ -220,25 +196,16 @@ function extend(g: Group, seg: Segment): void {
   g.topicScore = Math.max(g.topicScore, seg.topicScore);
 }
 
-/**
- * A segment that stands on its own: it has a topic, or it is a question with content of its own ("do you have a
- * mobile app?") rather than a follow-up ("can you check?").
- */
-function standsAlone(seg: Segment): boolean {
-  return seg.topic !== null || (seg.question && !seg.followUp);
-}
-
-/** Attach follow-ups and topic-less clauses to their neighbours and merge consecutive clauses about the same intent. */
+/** Attach topic-less clauses to their neighbours and merge consecutive clauses about the same intent. */
 function groupSegments(segments: Segment[]): Group[] {
   const groups: Group[] = [];
-  /** Follow-up clauses before the first group; they become part of the next group. */
+  /** Topic-less clauses before the first topic; they become part of the next group. */
   let prefix: Group | undefined;
   for (const seg of segments) {
     const last = groups.at(-1);
-    const alone = standsAlone(seg);
-    if (last && !seg.newTopic && (!alone || (seg.topic !== null && seg.topic === last.topic))) {
+    if (last && !seg.newTopic && (seg.topic === null || seg.topic === last.topic)) {
       extend(last, seg);
-    } else if (!alone && !seg.newTopic) {
+    } else if (seg.topic === null && !seg.newTopic) {
       if (prefix) extend(prefix, seg);
       else prefix = groupOf(seg);
     } else if (prefix && !seg.newTopic) {

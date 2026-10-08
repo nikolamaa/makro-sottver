@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import type { FastifyInstance } from 'fastify';
 import type { ImportItem } from '../shared/types.js';
-import { AiService } from './ai/aiService.js';
+import { AiService, type AiServiceDeps } from './ai/aiService.js';
 import { buildApp } from './api/app.js';
 import type { AppConfig } from './config.js';
 import { createCipher } from './crypto/cipher.js';
@@ -40,7 +40,13 @@ export interface Runtime {
 
 export type Logger = (msg: string) => void;
 
-export async function createRuntime(config: AppConfig, log: Logger = () => {}): Promise<Runtime> {
+/** Test seams (never set in production). */
+export interface RuntimeOptions {
+  /** Replaces the real Claude/Ollama providers (see AiServiceDeps.providerFactory). */
+  aiProviderFactory?: AiServiceDeps['providerFactory'];
+}
+
+export async function createRuntime(config: AppConfig, log: Logger = () => {}, options: RuntimeOptions = {}): Promise<Runtime> {
   const { key, storage, created } = await loadOrCreateMasterKey({
     keyDir: config.keyDir,
     envKey: config.envMasterKey,
@@ -75,6 +81,7 @@ export async function createRuntime(config: AppConfig, log: Logger = () => {}): 
     getApiKey: () => settingsRepo.getSecret('anthropic_api_key') ?? process.env.ANTHROPIC_API_KEY ?? null,
     recordUsage: (purpose, usage) => llmUsageRepo.record(purpose, usage),
     monthSpendUsd: () => llmUsageRepo.monthTotals().costUsd,
+    ...(options.aiProviderFactory ? { providerFactory: options.aiProviderFactory } : {}),
   });
   const assist = new AssistService(library, index, ai, () => settingsRepo.get());
 

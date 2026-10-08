@@ -220,7 +220,7 @@ const CODE_AMOUNT_RE = new RegExp(`\\b(${SAFE_CODE_SRC})\\s?(${NUM_SRC})(?!\\w|[
  * What may follow a bare number after a money verb for it to count as an amount ("deposited 500 yesterday",
  * "won 2k on dice"): the end, punctuation, a currency, or a function word - never a counted noun ("lost 2 bets").
  */
-const AMOUNT_FOLLOWER_SRC = String.raw`on|in|into|onto|to|from|at|and|but|or|via|with|using|through|for|so|yesterday|today|tonight|earlier|ago|last|this|that|which|it|already|just|now|then|when|since|after|before|i|i'm|im|my|me|bucks|quid|worth|total|back|out|over|yet|still|is|was|has|had|but`;
+const AMOUNT_FOLLOWER_SRC = String.raw`on|in|into|onto|to|from|at|and|but|or|via|with|using|through|for|so|yesterday|today|tonight|earlier|ago|last|this|that|which|it|already|just|now|then|when|since|after|before|i['’]m|im|i|my|me|bucks|quid|worth|total|back|out|over|yet|still|is|was|has|had`;
 const VERB_AMOUNT_RE = new RegExp(
   String.raw`\b(?:deposit(?:ed)?|withdr(?:aw|ew|awn)|cash(?:ed)?\s?out|sent|send|paid|transferred|won|lost|wagered|put|placed|staked|bet|balance(?:\s+(?:of|is|was))?|amount(?:\s+(?:of|is|was))?)\s+(?:of\s+|about\s+|around\s+|like\s+|~)?(${NUM_SRC})` +
     String.raw`(?=\s*$|\s*[!?;)\]\n]|[.,](?!\d)|\s*[$€£₹¥₺₦₩]|\s+(?:${AMOUNT_FOLLOWER_SRC}|${CODE_SRC})(?![\w'’]))`,

@@ -230,7 +230,7 @@ describe('availability', () => {
     expect(service.provider()).toBe(first);
 
     settings = settingsWith({ ai: { provider: 'ollama' } });
-    expect(service.provider()).toMatchObject({ id: 'ollama', model: 'qwen3:4b', isCloud: false });
+    expect(service.provider()).toMatchObject({ id: 'ollama', model: DEFAULT_SETTINGS.ai.ollamaModel, isCloud: false });
 
     settings = settingsWith();
     key = null;
@@ -468,8 +468,10 @@ describe('rerank', () => {
       }),
     });
     const { service, recorded } = serviceWith(provider);
-    const out = await service.rerank(input);
+    const res = await service.rerank(input);
+    const out = res.recommendations;
 
+    expect(res).toMatchObject({ aiUsed: true, usage: USAGE });
     expect(out.map((r) => [r.macroId, r.confidence])).toEqual([
       ['b', 92],
       ['a', 42],
@@ -487,20 +489,72 @@ describe('rerank', () => {
     expect(user).not.toContain('john@example.com');
   });
 
+  const unchanged = { recommendations: candidates, aiUsed: false, usage: null };
+  const rankAll = () => ({
+    ranked: [
+      { id: 'c', confidence: 88, reason: 'Best fit.' },
+      { id: 'a', confidence: 70, reason: 'Close.' },
+      { id: 'b', confidence: 20, reason: 'Off topic.' },
+    ],
+    no_good_match: false,
+    missing_topics: [],
+  });
+
   it('returns the original candidates on any AiError', async () => {
     const failing = serviceWith(fakeProvider({ error: new AiError('network', 'down') }));
-    await expect(failing.service.rerank(input)).resolves.toBe(candidates);
+    const res = await failing.service.rerank(input);
+    expect(res).toEqual(unchanged);
+    expect(res.recommendations).toBe(candidates);
 
     const off = serviceWith(null, settingsWith({ ai: { provider: 'none' } }));
-    await expect(off.service.rerank(input)).resolves.toBe(candidates);
+    await expect(off.service.rerank(input)).resolves.toEqual(unchanged);
 
     const broke = serviceWith(fakeProvider({ answer: () => ({}) }), settingsWith(), 0);
     await expect(broke.service.rerank(input)).rejects.toThrow();
   });
 
+  it('records the usage of billed calls that still failed', async () => {
+    const { service, recorded } = serviceWith(fakeProvider({ error: new AiError('invalid_output', 'cut off', USAGE) }));
+    await expect(service.rerank(input)).resolves.toEqual(unchanged);
+    expect(recorded).toEqual([{ purpose: 'rerank', usage: USAGE }]);
+  });
+
+  it('keeps the local ranking when the answer names none of the candidates', async () => {
+    const provider = fakeProvider({ answer: () => ({ ranked: [{ id: 'ghost', confidence: 99, reason: 'x' }], no_good_match: false, missing_topics: [] }) });
+    const { service, recorded } = serviceWith(provider);
+    await expect(service.rerank(input)).resolves.toEqual(unchanged);
+    expect(recorded).toHaveLength(1);
+  });
+
+  it('applies the monthly budget and strict local mode without calling the provider', async () => {
+    const cloud = fakeProvider({ answer: rankAll });
+    await expect(serviceWith(cloud, settingsWith({ ai: { monthlyBudgetUsd: 1 } }), 1).service.rerank(input)).resolves.toEqual(unchanged);
+    await expect(serviceWith(cloud, settingsWith({ privacy: { strictLocal: true } })).service.rerank(input)).resolves.toEqual(unchanged);
+    expect(cloud.requests).toHaveLength(0);
+
+    // A local model is allowed in strict mode, is never capped, and gets the message as is.
+    const local = fakeProvider({ isCloud: false, answer: rankAll });
+    const settings = settingsWith({ ai: { provider: 'ollama', monthlyBudgetUsd: 1 }, privacy: { strictLocal: true } });
+    const res = await serviceWith(local, settings, 99).service.rerank(input);
+    expect(res.aiUsed).toBe(true);
+    expect(res.recommendations.map((r) => r.macroId)).toEqual(['c', 'a', 'b']);
+    expect(local.requests[0]!.user).toContain('john@example.com');
+  });
+
+  it('pseudonymizes for cloud providers only when the setting is on', async () => {
+    const masked = fakeProvider({ answer: rankAll });
+    await serviceWith(masked).service.rerank(input);
+    expect(masked.requests[0]!.user).not.toContain('john@example.com');
+    expect(masked.requests[0]!.user).not.toContain('John Smith');
+
+    const plain = fakeProvider({ answer: rankAll });
+    await serviceWith(plain, settingsWith({ ai: { pseudonymize: false } })).service.rerank(input);
+    expect(plain.requests[0]!.user).toContain('john@example.com');
+  });
+
   it('skips the call when there is nothing to rank', async () => {
     const provider = fakeProvider({});
-    await expect(serviceWith(provider).service.rerank({ ...input, candidates: [] })).resolves.toEqual([]);
+    await expect(serviceWith(provider).service.rerank({ ...input, candidates: [] })).resolves.toEqual({ recommendations: [], aiUsed: false, usage: null });
     expect(provider.requests).toHaveLength(0);
   });
 });

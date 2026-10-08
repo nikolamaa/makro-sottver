@@ -8,10 +8,13 @@ import type {
   DraftRequest,
   DraftResponse,
   Fact,
+  Id,
   Intent,
+  Macro,
   PersonalizeRequest,
   PersonalizeResponse,
   RecommendResponse,
+  RerankResponse,
 } from '../../shared/types.js';
 import { INTENT_LABELS } from '../../shared/types.js';
 import { findPlaceholders, renderTemplate } from '../../shared/template.js';
@@ -19,9 +22,11 @@ import { analyzeMessage } from '../analysis/analyzer.js';
 import type { AiService } from '../ai/aiService.js';
 import { applyTone, ensureGreeting, personalizeFast, variablesFromAnalysis } from '../personalize/personalize.js';
 import type { MacroIndex } from '../search/macroIndex.js';
-import type { LibraryService } from './library.js';
+import { NotFoundError, type LibraryService } from './library.js';
 
 export const MAX_MESSAGE_CHARS = 8000;
+/** Local candidates the AI double-check looks at (independent of the 1..3 recommendations shown). */
+export const RERANK_CANDIDATES = 8;
 
 export class BadRequestError extends Error {
   constructor(message: string) {
@@ -63,6 +68,53 @@ export class AssistService {
       embeddings: this.index.embedder.status(),
       timingMs: { analysis: round(t1 - t0), search: round(t2 - t1), total: round(t2 - t0) },
     };
+  }
+
+  /**
+   * AI double-check of the recommendations: the local analysis + search over RERANK_CANDIDATES candidates, then the
+   * AI re-scores them (AiService.rerank applies strict local mode, the budget and pseudonymization, and falls back
+   * to the local candidates on any AI error). Returns the best settings.recommendation.maxResults. When the AI is
+   * not ready or ai.rerank is off, the local result is returned without calling it.
+   */
+  async rerank(message: string): Promise<RerankResponse> {
+    const text = this.checkMessage(message);
+    if (!text.trim()) return { recommendations: [], noGoodMatch: false, aiUsed: false, llm: null };
+    const settings = this.settings();
+    const { maxResults, minConfidence } = settings.recommendation;
+    const analysis = analyzeMessage(text);
+    const local = await this.index.search(text, analysis, { maxResults: RERANK_CANDIDATES, minConfidence });
+    const localResult: RerankResponse = {
+      recommendations: local.recommendations.slice(0, maxResults),
+      noGoodMatch: local.noGoodMatch,
+      aiUsed: false,
+      llm: null,
+    };
+    if (!settings.ai.rerank || !local.recommendations.length || !this.ai.isReady()) return localResult;
+
+    const macros = new Map<Id, Macro>();
+    for (const rec of local.recommendations) {
+      const macro = this.findMacro(rec.macroId);
+      if (macro) macros.set(macro.id, macro);
+    }
+    const ranked = await this.ai.rerank({ message: text, analysis, candidates: local.recommendations, macros });
+    if (!ranked.aiUsed) return localResult;
+    const recommendations = ranked.recommendations.slice(0, maxResults);
+    return {
+      recommendations,
+      noGoodMatch: (recommendations[0]?.confidence ?? 0) < minConfidence,
+      aiUsed: true,
+      llm: ranked.usage,
+    };
+  }
+
+  /** A macro that may have been deleted since the search ran. */
+  private findMacro(id: Id): Macro | null {
+    try {
+      return this.library.get(id);
+    } catch (err) {
+      if (err instanceof NotFoundError) return null;
+      throw err;
+    }
   }
 
   async personalize(req: PersonalizeRequest): Promise<PersonalizeResponse> {

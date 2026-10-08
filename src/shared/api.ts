@@ -28,6 +28,8 @@ import type {
   PersonalizeResponse,
   RecommendRequest,
   RecommendResponse,
+  RerankRequest,
+  RerankResponse,
   SecurityStatus,
   UsageEventInput,
   UsageSummary,
@@ -75,6 +77,8 @@ export interface ApiRoutes {
 
   // Assist
   'POST /api/recommend': { req: RecommendRequest; res: RecommendResponse };
+  /** Optional AI double-check of the local recommendations (local result when the AI is off/not ready/failing). */
+  'POST /api/rerank': { req: RerankRequest; res: RerankResponse };
   'POST /api/personalize': { req: PersonalizeRequest; res: PersonalizeResponse };
   'POST /api/draft': { req: DraftRequest; res: DraftResponse };
   'POST /api/events': { req: UsageEventInput; res: { ok: true } }; // reply_copied also bumps macro useCount

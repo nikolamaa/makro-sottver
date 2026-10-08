@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { InjectOptions } from 'fastify';
 import { API_CLIENT_HEADER } from '../../shared/api.js';
-import type { Macro, MacroVersion, PersonalizeResponse, RecommendResponse } from '../../shared/types.js';
+import type { AppSettings, Macro, MacroVersion, PersonalizeResponse, RecommendResponse, RerankResponse } from '../../shared/types.js';
 import { createRuntime, KeyMismatchError, type Runtime } from '../bootstrap.js';
 import type { AppConfig } from '../config.js';
 import { readBackup } from '../crypto/backup.js';
@@ -128,6 +128,27 @@ describe('macro lifecycle + assist flow', () => {
     expect(res.body.recommendations[0]?.macroId).toBe(wd.id);
     expect(res.body.analysis.intents[0]?.intent).toBe('withdrawal_pending');
     expect(res.body.timingMs.total).toBeLessThan(200);
+  });
+
+  it('AI double-check falls back to the local recommendations when AI is off', async () => {
+    const message = 'Hey, my BTC withdrawal has been pending for 2 days, where is it??';
+    const local = await call<RecommendResponse>('POST', '/api/recommend', { message });
+    const res = await call<RerankResponse>('POST', '/api/rerank', { message });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ recommendations: local.body.recommendations, noGoodMatch: local.body.noGoodMatch, aiUsed: false, llm: null });
+    expect(res.body.recommendations[0]?.macroId).toBe(wd.id);
+
+    expect((await call<RerankResponse>('POST', '/api/rerank', { message: '   ' })).body).toEqual({ recommendations: [], noGoodMatch: false, aiUsed: false, llm: null });
+    expect((await call('POST', '/api/rerank', {})).status).toBe(400);
+    expect((await call('POST', '/api/rerank', { message: 42 })).status).toBe(400);
+    expect((await call('POST', '/api/rerank', { message: 'x'.repeat(9000) })).status).toBe(400);
+  });
+
+  it('stores the AI double-check setting (default on)', async () => {
+    expect((await call<AppSettings>('GET', '/api/settings')).body.ai.rerank).toBe(true);
+    expect((await call<AppSettings>('PUT', '/api/settings', { ai: { rerank: false } })).body.ai.rerank).toBe(false);
+    expect((await call<AppSettings>('PUT', '/api/settings', { ai: { rerank: 'yes' } })).body.ai.rerank).toBe(false);
+    expect((await call<AppSettings>('PUT', '/api/settings', { ai: { rerank: true } })).body.ai.rerank).toBe(true);
   });
 
   it('personalizes in fast mode', async () => {

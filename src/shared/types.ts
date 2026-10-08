@@ -298,6 +298,23 @@ export interface RecommendResponse {
   timingMs: { analysis: number; search: number; total: number };
 }
 
+export type RerankRequest = RecommendRequest;
+
+/**
+ * AI double-check of the local recommendations for one message (POST /api/rerank). The local candidates are
+ * re-scored by the AI; when the AI is not ready, turned off or fails, the local result is returned unchanged.
+ */
+export interface RerankResponse {
+  /** At most settings.recommendation.maxResults recommendations, best first (AI confidence/reason when aiUsed). */
+  recommendations: Recommendation[];
+  /** True when the best confidence (the AI's when aiUsed) is below the configured threshold. */
+  noGoodMatch: boolean;
+  /** True when the AI ranking was applied; false = local result (AI off, not ready, disabled or failed). */
+  aiUsed: boolean;
+  /** Tokens and cost of the AI call; null when the AI was not used. */
+  llm: LlmUsage | null;
+}
+
 // ---------------------------------------------------------------------------
 // Personalization / drafting
 // ---------------------------------------------------------------------------
@@ -397,6 +414,11 @@ export interface AppSettings {
     effort: AiEffort;
     /** Run AI personalization automatically when a recommendation is selected. */
     autoPolish: boolean;
+    /**
+     * AI double-check of recommendations: after the instant local match, the AI re-scores the top local
+     * candidates (POST /api/rerank). Only used when a provider is ready; never delays the local result.
+     */
+    rerank: boolean;
     /** Hard monthly spend cap in USD for paid providers; 0 = no cap. */
     monthlyBudgetUsd: number;
     /** Replace personal data with tokens before sending text to a cloud LLM. */
@@ -449,6 +471,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     ollamaModel: 'qwen2.5:3b',
     effort: 'low',
     autoPolish: false,
+    rerank: true,
     monthlyBudgetUsd: 5,
     pseudonymize: true,
   },

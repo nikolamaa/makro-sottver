@@ -27,6 +27,8 @@ const WAIT_BEFORE_RE =
   /\b(?:wait\w*|pending|stuck|delayed|on hold|processing|in review|under review|not (?:yet )?(?:arrived|received|credited|processed|approved|showing|shown|reflected|here|there|paid)|(?:haven't|have not|hasn't|has not|didn't|did not) (?:got|gotten|received|arrived|come)|no (?:response|reply|answer|update)s?|missing)\b[^.!?\n]{0,24}$/;
 /** Elapsed-time wording before a duration ("it's been 3 days"); counts only when something is being waited on. */
 const PAST_BEFORE_RE = /\b(?:it(?:'s| is| has)? been|since|already|for (?:the )?(?:last|past))\b[^.!?\n]{0,12}$/;
+/** Waiting wording right after a duration ("3 days pending", "2 days and still nothing"). */
+const WAIT_AFTER_RE = /^\s*(?:now\s+)?(?:pending|stuck|waiting|delayed|and (?:still|nothing|no))\b/;
 /** "3 days ago" */
 const AGO_AFTER_RE = /^\s*(?:ago|back)\b/;
 /** Something the customer is waiting on: a payment, a verification, a support answer. */
@@ -49,8 +51,9 @@ function longWait(text: string, norm: string, entities: Entity[]): boolean {
   return entities.some((e) => {
     if (e.type !== 'duration' || (durationHours(e.value) ?? 0) < LONG_WAIT_HOURS) return false;
     const before = normalizeForMatch(text.slice(Math.max(0, e.start - WAIT_WINDOW), e.start));
-    if (WAIT_BEFORE_RE.test(before)) return true;
-    return process && (PAST_BEFORE_RE.test(before) || AGO_AFTER_RE.test(text.slice(e.end, e.end + 8)));
+    const after = normalizeForMatch(text.slice(e.end, e.end + WAIT_WINDOW));
+    if (WAIT_BEFORE_RE.test(before) || WAIT_AFTER_RE.test(` ${after}`)) return true;
+    return process && (PAST_BEFORE_RE.test(before) || AGO_AFTER_RE.test(` ${after}`));
   });
 }
 

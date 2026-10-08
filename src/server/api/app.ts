@@ -244,6 +244,7 @@ export async function buildApp(ctx: AppContext): Promise<FastifyInstance> {
 
   // Assist -------------------------------------------------------------------
   app.post('/api/recommend', async (req) => ctx.assist.recommend(parse(MessageSchema, req.body).message));
+  app.post('/api/rerank', async (req) => ctx.assist.rerank(parse(MessageSchema, req.body).message));
   app.post('/api/personalize', async (req) => ctx.assist.personalize(parse(PersonalizeSchema, req.body)));
   app.post('/api/draft', async (req) => ctx.assist.draft(parse(DraftSchema, req.body)));
   app.post('/api/events', async (req) => {

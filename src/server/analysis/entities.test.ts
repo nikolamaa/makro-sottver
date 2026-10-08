@@ -254,6 +254,66 @@ describe('extractEntities: invariants', () => {
   });
 });
 
+describe('extractEntities: review regressions (false positives feed {{amount}}, {{user}}, {{username}})', () => {
+  it('does not read counted things after a money verb as an amount', () => {
+    expect(values('I placed 3 bets and lost 2 bets', 'amount')).toEqual([]);
+    expect(values('I sent 2 emails already, still nothing', 'amount')).toEqual([]);
+    expect(values('lost 20 dice rolls in a row', 'amount')).toEqual([]);
+    expect(values('won 3 games today', 'amount')).toEqual([]);
+    // The first amount wins in personalization, so a stray count must not precede the real one.
+    expect(values('I sent 2 emails about my deposit of 50 USDT', 'amount')).toEqual(['50']);
+  });
+
+  it('still reads bare amounts after a money verb', () => {
+    expect(values('deposited 500 yesterday', 'amount')).toEqual(['500']);
+    expect(values('I deposited 200 and lost it all', 'amount')).toEqual(['200']);
+    expect(values('won 2k on dice', 'amount')).toEqual(['2000']);
+    expect(values('withdrew 300 to my wallet', 'amount')).toEqual(['300']);
+    expect(values('my balance is 0.', 'amount')).toEqual(['0']);
+    expect(values('sent 100\nMy balance is still empty', 'amount')).toEqual(['100']);
+  });
+
+  it('reads space-grouped thousands as one amount ("1 000 USDT", "1 000 €")', () => {
+    expect(pairs('deposited 1 000 usdt', 'amount', 'crypto')).toEqual([
+      ['amount', '1000'],
+      ['crypto', 'USDT'],
+    ]);
+    expect(pairs('1 000,50 €', 'amount', 'currency')).toEqual([
+      ['amount', '1000.50'],
+      ['currency', 'EUR'],
+    ]);
+    expect(values('my balance is 1 500, why', 'amount')).toEqual(['1500']);
+  });
+
+  it('does not read the ordinal "a second" as a duration', () => {
+    expect(values('I made a second deposit and it is missing', 'duration')).toEqual([]);
+    expect(values('waited 30 seconds', 'duration')).toEqual(['30 seconds']);
+  });
+
+  it('does not read a missing space after a period as a domain', () => {
+    expect(values('I tried again.Games keep crashing', 'url')).toEqual([]);
+    expect(values('go to Stake.com now', 'url')).toEqual(['Stake.com']);
+    expect(values('STAKE.COM', 'url')).toEqual(['STAKE.COM']);
+  });
+
+  it('does not take adjectives or the verb "handle" as a username', () => {
+    expect(values('my username is wrong', 'username')).toEqual([]);
+    expect(values('my username is showing incorrectly', 'username')).toEqual([]);
+    expect(values('Please handle ASAP', 'username')).toEqual([]);
+    expect(values('can you handle Marko99 for me', 'username')).toEqual([]);
+    expect(values('my handle is @johnny', 'username')).toEqual(['johnny']);
+    expect(values('my username is mike', 'username')).toEqual(['mike']);
+  });
+
+  it('needs punctuation after ambiguous sign-offs ("best", "yours") before a name', () => {
+    expect(values('What is the best Bonus', 'name')).toEqual([]);
+    expect(values('is this yours John', 'name')).toEqual([]);
+    expect(values('Best, Marko', 'name')).toEqual(['Marko']);
+    expect(values('Best\nMarko', 'name')).toEqual(['Marko']);
+    expect(values('Thank you so much, John', 'name')).toEqual(['John']);
+  });
+});
+
 describe('normalizeNumber / durationHours', () => {
   it.each([
     ['1,000.50', '1000.50'],

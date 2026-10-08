@@ -2,7 +2,7 @@
  * High-level AI features with privacy + cost controls. Owns provider selection, budget enforcement,
  * pseudonymization, guardrails and graceful errors. personalize() and draft() throw AiError for every failure
  * (not configured, strict local, budget, provider errors) so the API can show it and fall back to fast mode;
- * rerank() never fails because of AI and returns the local candidates instead.
+ * rerank() never fails because of AI and returns the local candidates instead (aiUsed = false).
  */
 import type { z } from 'zod';
 import type {
@@ -70,6 +70,16 @@ const WHITESPACE_RE = /\s+/g;
 
 /** Placeholder label -> standard variable, e.g. "[ENTER ETA TIME]" -> "eta_time". */
 const STANDARD_PLACEHOLDERS: ReadonlyMap<string, string> = new Map(STANDARD_VARIABLES.map((v) => [placeholderLabel(v), v]));
+
+/** Result of AiService.rerank(). */
+export interface RerankResult {
+  /** AI-ranked recommendations (aiUsed) or the local candidates unchanged. */
+  recommendations: Recommendation[];
+  /** True when the AI ranking was applied. */
+  aiUsed: boolean;
+  /** Usage of the successful AI call (null when the AI was not used). */
+  usage: LlmUsage | null;
+}
 
 type Availability =
   | { ok: true; provider: LlmProvider; settings: AppSettings }
@@ -192,20 +202,25 @@ export class AiService {
 
   /**
    * Optional LLM re-rank of local candidates; returns re-ordered recommendations with AI reasons/confidence.
-   * Breakdown, warnings and other local fields are kept. Never fails because of AI: on any AiError (not configured,
-   * budget, network, invalid output...) the original candidates are returned unchanged.
+   * Breakdown, warnings and other local fields are kept. Same rules as the other AI features: strict local mode,
+   * the monthly budget and pseudonymization apply, and usage is recorded (also for billed calls that failed).
+   * Never fails because of AI: on any AiError (not configured, strict local, budget, network, invalid output...)
+   * the original candidates are returned unchanged with aiUsed = false.
    */
-  async rerank(input: { message: string; analysis: Analysis; candidates: Recommendation[]; macros: Map<string, Macro> }): Promise<Recommendation[]> {
-    if (!input.candidates.length) return [];
+  async rerank(input: { message: string; analysis: Analysis; candidates: Recommendation[]; macros: ReadonlyMap<string, Macro> }): Promise<RerankResult> {
+    const local: RerankResult = { recommendations: input.candidates, aiUsed: false, usage: null };
+    if (!input.candidates.length) return local;
     try {
       const { provider, settings } = this.require();
       const view = privacyView(provider, settings, input.message, input.analysis, {});
       const candidates = input.candidates.map((c) => rankCandidate(c, input.macros.get(c.macroId)));
       const spec = rankPrompt(view.message, analysisForPrompt(input.analysis, view.mask), candidates);
-      const { data } = await this.run('rerank', provider, settings, spec);
-      return applyRanking(input.candidates, data.ranked, view.restore);
+      const { data, usage } = await this.run('rerank', provider, settings, spec);
+      // An answer that names none of the candidates carries no ranking: keep the local one.
+      if (!data.ranked.some((r) => input.candidates.some((c) => c.macroId === r.id))) return local;
+      return { recommendations: applyRanking(input.candidates, data.ranked, view.restore), aiUsed: true, usage };
     } catch (err) {
-      if (err instanceof AiError) return input.candidates;
+      if (err instanceof AiError) return local;
       throw err;
     }
   }
