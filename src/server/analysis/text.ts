@@ -47,27 +47,31 @@ export function countWords(text: string): number {
   return text.match(WORD_RE)?.length ?? 0;
 }
 
-const CAPS_WORD_RE = /\p{L}[\p{L}'’]*/gu;
+/** Letter/digit runs; runs that contain a digit ("2FA", "TRC20", "CS2") are codes, not shouted words. */
+const CAPS_WORD_RE = /[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu;
 const UPPER_RE = /\p{Lu}/u;
 const LOWER_RE = /\p{Ll}/u;
+const DIGIT_RE = /\p{N}/u;
 
 /** Upper-case acronyms that are normally written in caps and must not count as "shouting". */
 const NATURAL_ACRONYMS: ReadonlySet<string> = new Set(
   `btc eth ltc usdt usdc trx xrp doge sol bch bnb ada eos dai usd eur gbp inr cad jpy brl try ngn vip kyc id otp vpn faq
   ok erc trc bep bsc poa poi uk us eu nba nfl nhl mlb ufc api sms pdf url iban upi pix tx txid asap pm am atm nft fyi btw
-  lol ip dm utc gmt swift`.split(/\s+/),
+  lol ip dm utc gmt swift busd shib matic pol link uni ape cro sand tron aud nzd chf mxn ars clp cop pen idr php vnd krw
+  rub uah pln zar sek nok dkk czk huf kzt eta rtp rng aml sof edd pep tos ios pc tv gif jpg jpeg png ceo usa uae fifa
+  uefa epl ipl mvp ftd pin nfts cs csgo`.split(/\s+/),
 );
 
 /**
- * "Shouted" words: words of 2+ letters written fully in upper case, ignoring common acronyms (BTC, KYC...).
- * Returns the number of words considered, how many of them are shouted, and the ratio.
+ * "Shouted" words: words of 2+ letters written fully in upper case, ignoring common acronyms (BTC, KYC, RTP...) and
+ * codes that contain digits (2FA, TRC20). Returns the number of words considered, how many are shouted, and the ratio.
  */
 export function capsRatio(text: string): { ratio: number; words: number; caps: number } {
   let words = 0;
   let caps = 0;
   for (const m of text.matchAll(CAPS_WORD_RE)) {
     const w = m[0];
-    if (w.length < 2 || NATURAL_ACRONYMS.has(w.toLowerCase())) continue;
+    if (w.length < 2 || DIGIT_RE.test(w) || NATURAL_ACRONYMS.has(w.toLowerCase())) continue;
     words++;
     if (UPPER_RE.test(w) && !LOWER_RE.test(w)) caps++;
   }

@@ -55,6 +55,8 @@ export class LibraryService {
     private readonly categories: CategoryRepo,
     private readonly index: MacroIndex,
     private readonly cipher: Cipher,
+    /** Runs fn in one database transaction (all-or-nothing imports). */
+    private readonly transaction: <T>(fn: () => T) => T = (fn) => fn(),
   ) {}
 
   /** Embedding cache key for a macro's current content (equals macro_versions.content_hmac). */
@@ -188,30 +190,37 @@ export class LibraryService {
     return [...this.active.values()].map((m) => ({ id: m.id, title: m.title }));
   }
 
+  /** Import macros all-or-nothing: either every item is written or none (the index is updated afterwards). */
   async importItems(req: ImportCommitRequest, source: ChangeSource = 'import', at?: Date): Promise<ImportCommitResult> {
     const result: ImportCommitResult = { created: 0, updated: 0, skipped: 0 };
     const byTitle = new Map<string, Id>();
     for (const m of this.active.values()) byTitle.set(normalizeTitle(m.title), m.id);
 
-    for (const item of req.items) {
-      const input = this.itemToInput(item);
-      const dup = item.duplicateOf ?? byTitle.get(normalizeTitle(item.title)) ?? null;
-      if (dup && this.active.has(dup)) {
-        if (req.onDuplicate === 'skip') {
-          result.skipped++;
-          continue;
+    const written = this.transaction(() => {
+      const out: Macro[] = [];
+      for (const item of req.items) {
+        const input = this.itemToInput(item);
+        const dup = item.duplicateOf ?? byTitle.get(normalizeTitle(item.title)) ?? null;
+        if (dup && this.active.has(dup)) {
+          if (req.onDuplicate === 'skip') {
+            result.skipped++;
+            continue;
+          }
+          if (req.onDuplicate === 'new_version') {
+            out.push(this.macros.update(dup, { ...input, changeNote: 'Imported update' }, source));
+            result.updated++;
+            continue;
+          }
+          input.title = `${input.title} (copy)`;
         }
-        if (req.onDuplicate === 'new_version') {
-          await this.update(dup, { ...input, changeNote: 'Imported update' }, source);
-          result.updated++;
-          continue;
-        }
-        input.title = `${input.title} (copy)`;
+        const created = this.macros.create(input, source, at);
+        byTitle.set(normalizeTitle(created.title), created.id);
+        out.push(created);
+        result.created++;
       }
-      const created = await this.create(input, source, at);
-      byTitle.set(normalizeTitle(created.title), created.id);
-      result.created++;
-    }
+      return out;
+    });
+    for (const m of written) await this.sync(m);
     return result;
   }
 

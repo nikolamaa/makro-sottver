@@ -4,15 +4,14 @@
  *
  * Unsaved changes are protected three ways:
  *  - switching macros / creating a new one / Use in Assist asks first (confirm modal),
- *  - top navigation (clicks and Alt+Shift+N hotkeys) asks first, the browser asks on reload/close (beforeunload),
+ *  - leaving the page (navigation guard in store.ts) asks first, the browser asks on reload/close (beforeunload),
  *  - anything else that unmounts the page (quick search, back button) keeps the draft in memory (stash.ts, which
  *    keeps the browser's reload/close prompt armed) and restores it the next time the Library opens.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Id, Macro } from '../../../shared/types';
 import { api } from '../../api';
-import { matchCombo } from '../../hotkeys';
-import { actions, getState, setState, useStore, type Page } from '../../store';
+import { actions, getState, setState, useStore } from '../../store';
 import { toast } from '../../ui';
 import {
   draftFromMacro,
@@ -74,13 +73,6 @@ const cleared = (p: EditorState): EditorState => ({ ...INITIAL, session: p.sessi
 /** Unsaved editor state kept in memory when the page unmounts while dirty. */
 const stash = createUnsavedStash<EditorState>();
 
-/** Mirrors the top navigation hotkeys in App.tsx. */
-const NAV_HOTKEYS: { combo: string; page: Page }[] = [
-  { combo: 'alt+shift+1', page: 'assist' },
-  { combo: 'alt+shift+2', page: 'library' },
-  { combo: 'alt+shift+3', page: 'import' },
-  { combo: 'alt+shift+4', page: 'settings' },
-];
 
 export function focusField(field: DraftField, factUid?: string): void {
   requestAnimationFrame(() => {
@@ -146,7 +138,6 @@ export function useLibraryController() {
     (id: Id) => latestKnownMacro(id, [getState().macros, archivedRef.current], macroRef.current),
     [],
   );
-  const bypassNav = useRef(false);
   const initialized = useRef(false);
 
   // ---------------------------------------------------------------------------
@@ -561,37 +552,14 @@ export function useLibraryController() {
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [dirty]);
 
-  // Leaving the page through the top navigation (clicks + Alt+Shift+N hotkeys).
+  // Leaving the page (top navigation, hotkeys, quick search, browser Back) asks first while there are unsaved edits.
   useEffect(() => {
-    const onClick = (e: MouseEvent) => {
-      if (bypassNav.current || !dirtyRef.current || e.button !== 0) return;
-      const item = e.target instanceof Element ? e.target.closest<HTMLElement>('.topbar .nav-item') : null;
-      if (!item || item.classList.contains('active')) return;
-      e.preventDefault();
-      e.stopPropagation();
-      guard(() => {
-        bypassNav.current = true;
-        try {
-          item.click();
-        } finally {
-          bypassNav.current = false;
-        }
-      });
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (!dirtyRef.current) return;
-      const hit = NAV_HOTKEYS.find((n) => matchCombo(n.combo, e));
-      if (!hit || hit.page === 'library') return;
-      e.preventDefault();
-      e.stopPropagation();
-      guard(() => actions.navigate(hit.page));
-    };
-    window.addEventListener('click', onClick, true);
-    window.addEventListener('keydown', onKeyDown, true);
-    return () => {
-      window.removeEventListener('click', onClick, true);
-      window.removeEventListener('keydown', onKeyDown, true);
-    };
+    actions.setNavigationGuard((_to, proceed) => {
+      if (!dirtyRef.current) return false;
+      guard(proceed);
+      return true;
+    });
+    return () => actions.setNavigationGuard(null);
   }, [guard]);
 
   return {

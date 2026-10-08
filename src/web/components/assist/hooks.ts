@@ -20,7 +20,7 @@ export type ScopedHotkeyHandler = (e: KeyboardEvent) => boolean;
 /**
  * Capture-phase hotkeys that only fire while focus is inside `scopeRef` (or nowhere in particular), and that
  * win over the global bubbling-phase hotkeys from useHotkeys: a handled key is not seen by them.
- * Used where a page deliberately reuses a global combo (Assist's Alt+Shift+1..3 vs. App navigation).
+ * Used for page-scoped combos such as Assist's Alt+Shift+1..3 (combine macros).
  */
 export function useScopedCaptureHotkeys(scopeRef: RefObject<HTMLElement | null>, map: Record<string, ScopedHotkeyHandler>): void {
   const mapRef = useRef(map);

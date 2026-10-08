@@ -40,6 +40,13 @@ let state: AppState = {
 
 const listeners = new Set<() => void>();
 
+/**
+ * Navigation guard (e.g. the Library with unsaved changes). Returns true when it takes over the navigation:
+ * it must then call `proceed()` itself if the user confirms leaving.
+ */
+export type NavigationGuard = (to: Page, proceed: () => void) => boolean;
+let navigationGuard: NavigationGuard | null = null;
+
 function pageFromHash(): Page {
   const h = typeof location !== 'undefined' ? location.hash.replace(/^#\/?/, '') : '';
   return h === 'library' || h === 'import' || h === 'settings' ? h : 'assist';
@@ -105,8 +112,16 @@ export const actions = {
     setState({ settings });
   },
   navigate(page: Page): void {
-    if (typeof location !== 'undefined' && location.hash !== `#/${page}`) location.hash = `#/${page}`;
-    setState({ page });
+    const go = () => {
+      if (typeof location !== 'undefined' && location.hash !== `#/${page}`) location.hash = `#/${page}`;
+      setState({ page });
+    };
+    if (page !== state.page && navigationGuard?.(page, go)) return;
+    go();
+  },
+  /** Install (or clear with null) the guard consulted before leaving the current page. */
+  setNavigationGuard(guard: NavigationGuard | null): void {
+    navigationGuard = guard;
   },
   openInLibrary(id: Id): void {
     setState({ libraryFocusId: id });
@@ -119,7 +134,21 @@ export const actions = {
 };
 
 if (typeof window !== 'undefined') {
-  window.addEventListener('hashchange', () => setState({ page: pageFromHash() }));
+  window.addEventListener('hashchange', () => {
+    const to = pageFromHash();
+    if (to === state.page) return;
+    const from = state.page;
+    const go = () => {
+      if (location.hash !== `#/${to}`) location.hash = `#/${to}`;
+      setState({ page: to });
+    };
+    if (navigationGuard?.(to, go)) {
+      // Undo the hash change (browser Back / typed URL) until the guard lets us leave.
+      history.replaceState(null, '', `#/${from}`);
+      return;
+    }
+    go();
+  });
 }
 
 export function categoryName(categories: Category[], id: Id | null): string | null {

@@ -33,8 +33,8 @@ function useReadClipboardHotkey(actions: AssistActions, messageRef: RefObject<HT
 }
 
 /**
- * Register the Assist shortcuts. Alt+Shift+1..3 (combine) also switch pages globally, so they are taken in
- * the capture phase while focus is on this page - and only when that recommendation card exists.
+ * Register the Assist shortcuts. Alt+Shift+1..3 (combine) are scoped to this page and only fire when that
+ * recommendation card exists.
  */
 export function useAssistHotkeys(actions: AssistActions, refs: AssistHotkeyRefs, recommendationCount: number): void {
   const keys = useMemo<HotkeyMap>(

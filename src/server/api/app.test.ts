@@ -248,3 +248,20 @@ describe('import / export / security', () => {
     await expect(createRuntime(other)).rejects.toBeInstanceOf(KeyMismatchError);
   });
 });
+
+describe('backup restore', () => {
+  it('opens a backup with the recovery key and previews its macros; rejects a wrong key', async () => {
+    const rotated = await call<{ recoveryKey: string }>('POST', '/api/security/recovery-key/rotate');
+    const backup = await rt.app.inject({ method: 'GET', url: '/api/export?format=backup', headers: { host: `127.0.0.1:${PORT}`, [API_CLIENT_HEADER]: '1' } });
+    const ok = await call<{ items: { title: string; duplicateOf: string | null }[] }>('POST', '/api/import/backup', {
+      backup: backup.body,
+      recoveryKey: rotated.body.recoveryKey.toLowerCase(),
+    });
+    expect(ok.status).toBe(200);
+    const wd = ok.body.items.find((i) => i.title === 'Crypto withdrawal still pending');
+    expect(wd?.duplicateOf).toBeTruthy();
+    const bad = await call<{ error: string }>('POST', '/api/import/backup', { backup: backup.body, recoveryKey: 'MPRK-0000-0000-0000-0000-0000-0000-0000-0000' });
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toMatch(/recovery key/i);
+  });
+});

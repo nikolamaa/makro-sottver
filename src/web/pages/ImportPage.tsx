@@ -6,7 +6,7 @@
  * (.mpbackup) or a plain JSON file (after an explicit warning).
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type KeyboardEvent } from 'react';
-import { INTENTS, INTENT_LABELS, type ImportCommitRequest, type ImportCommitResult, type ImportFormat, type ImportItem } from '../../shared/types';
+import { INTENTS, INTENT_LABELS, type ImportCommitRequest, type ImportCommitResult, type ImportFormat, type ImportItem, type ImportPreview } from '../../shared/types';
 import { api, downloadFile } from '../api';
 import { useHotkeys } from '../hotkeys';
 import { actions } from '../store';
@@ -92,6 +92,8 @@ interface PreviewState {
   items: ImportItem[];
   errors: string[];
   included: boolean[];
+  /** 'backup' previews come from an encrypted .mpbackup file, not from the text box (never stale). */
+  source?: 'backup';
 }
 
 export function ImportPage() {
@@ -114,7 +116,13 @@ export function ImportPage() {
 
   useEffect(() => () => previewAbort.current?.abort(), []);
 
-  const stale = preview !== null && (preview.content !== content || preview.format !== format);
+  const stale = preview !== null && preview.source !== 'backup' && (preview.content !== content || preview.format !== format);
+
+  const showBackupPreview = useCallback((res: ImportPreview) => {
+    setPreview({ format: 'json', content: '', items: res.items, errors: res.errors, included: res.items.map(() => true), source: 'backup' });
+    setResult(null);
+    requestAnimationFrame(() => previewRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
+  }, []);
   const suggested = useMemo(() => {
     const g = guessFormat(content);
     return g && g !== format ? g : null;
@@ -518,7 +526,7 @@ export function ImportPage() {
         )}
       </section>
 
-      <ExportSection />
+      <ExportSection onBackupPreview={showBackupPreview} />
     </div>
   );
 }
@@ -764,9 +772,27 @@ function ImportResult({ result, partial, onDismiss }: { result: ImportCommitResu
 // Export
 // ---------------------------------------------------------------------------
 
-function ExportSection() {
+function ExportSection({ onBackupPreview }: { onBackupPreview: (preview: ImportPreview) => void }) {
   const [busy, setBusy] = useState<'backup' | 'json' | null>(null);
   const [confirmJson, setConfirmJson] = useState(false);
+  const [backupFile, setBackupFile] = useState<File | null>(null);
+  const [recoveryKey, setRecoveryKey] = useState('');
+  const [opening, setOpening] = useState(false);
+
+  const openBackup = async () => {
+    if (!backupFile || !recoveryKey.trim()) return;
+    setOpening(true);
+    try {
+      const preview = await api('POST /api/import/backup', { body: { backup: await backupFile.text(), recoveryKey: recoveryKey.trim() } });
+      setRecoveryKey('');
+      onBackupPreview(preview);
+      toast(`Backup opened: ${plural(preview.items.length, 'macro')} ready to review`, 'success');
+    } catch (err) {
+      toast(errorMessage(err), 'danger', 5000);
+    } finally {
+      setOpening(false);
+    }
+  };
 
   const download = async (kind: 'backup' | 'json') => {
     setBusy(kind);
@@ -805,6 +831,39 @@ function ExportSection() {
             {busy === 'backup' ? <Spinner label="Preparing backup" /> : null}
             Download encrypted backup (.mpbackup)
           </Button>
+        </div>
+        <div className="imp-export-item">
+          <h3>Restore a backup</h3>
+          <p className="muted small">
+            Open a <code>.mpbackup</code> file (e.g. from another computer) with its recovery key. The macros appear in
+            &quot;Review &amp; import&quot; above, where you choose what to import.
+          </p>
+          <div className="stack">
+            <input
+              type="file"
+              accept=".mpbackup,application/octet-stream"
+              aria-label="Backup file"
+              onChange={(e) => setBackupFile(e.target.files?.[0] ?? null)}
+            />
+            <input
+              type="password"
+              aria-label="Recovery key"
+              placeholder="MPRK-XXXX-XXXX-..."
+              autoComplete="off"
+              spellCheck={false}
+              data-1p-ignore="true"
+              data-lpignore="true"
+              value={recoveryKey}
+              onChange={(e) => setRecoveryKey(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void openBackup();
+              }}
+            />
+            <Button onClick={() => void openBackup()} disabled={opening || !backupFile || !recoveryKey.trim()}>
+              {opening ? <Spinner label="Opening backup" /> : null}
+              Open backup
+            </Button>
+          </div>
         </div>
         <div className="imp-export-item">
           <h3>Plain JSON</h3>

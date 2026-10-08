@@ -1,7 +1,7 @@
 /**
  * Shared UI primitives. Keep them tiny and dependency-free. Styling lives in styles.css (class names below).
  */
-import { useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { comboLabel } from './hotkeys';
 
 type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
@@ -54,6 +54,13 @@ export function ConfidenceBar({ value }: { value: number }) {
   );
 }
 
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/**
+ * Accessible dialog: Escape closes, focus moves into the dialog on open, Tab/Shift+Tab stay inside it, and focus
+ * returns to the previously focused element when it closes. Elements marked data-autofocus get initial focus.
+ */
 export function Modal({
   open,
   title,
@@ -69,21 +76,50 @@ export function Modal({
   footer?: ReactNode;
   wide?: boolean;
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   useEffect(() => {
     if (!open) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = dialogRef.current;
+    if (dialog && !dialog.contains(document.activeElement)) {
+      const preferred = dialog.querySelector<HTMLElement>('[data-autofocus]');
+      const first = dialog.querySelector<HTMLElement>(`.modal-body ${FOCUSABLE}`) ?? dialog.querySelector<HTMLElement>(FOCUSABLE);
+      (preferred ?? first ?? dialog).focus();
+    }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onClose();
+        onCloseRef.current();
+        return;
+      }
+      if (e.key !== 'Tab' || !dialogRef.current) return;
+      const items = [...dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.offsetParent !== null);
+      if (!items.length) return;
+      const first = items[0]!;
+      const last = items[items.length - 1]!;
+      const active = document.activeElement;
+      if (e.shiftKey && (active === first || !dialogRef.current.contains(active))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || !dialogRef.current.contains(active))) {
+        e.preventDefault();
+        first.focus();
       }
     };
     window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [open, onClose]);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      if (previous && document.contains(previous)) previous.focus();
+    };
+  }, [open]);
+
   if (!open) return null;
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`modal ${wide ? 'modal-wide' : ''}`} role="dialog" aria-modal="true" aria-label={title}>
+      <div ref={dialogRef} tabIndex={-1} className={`modal ${wide ? 'modal-wide' : ''}`} role="dialog" aria-modal="true" aria-label={title}>
         <div className="modal-header">
           <h2>{title}</h2>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">

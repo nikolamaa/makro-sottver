@@ -82,6 +82,8 @@ export interface ApiRoutes {
   // Import / export
   'POST /api/import/preview': { req: { format: ImportFormat; content: string }; res: ImportPreview };
   'POST /api/import/commit': { req: ImportCommitRequest; res: ImportCommitResult };
+  /** Open an encrypted .mpbackup (file content as text) with its recovery key; returns a preview to commit. */
+  'POST /api/import/backup': { req: { backup: string; recoveryKey: string }; res: ImportPreview };
   // GET /api/export?format=json  -> application/json download (plaintext, UI must confirm first)
   // GET /api/export?format=backup -> application/octet-stream (.mpbackup, encrypted with the recovery key)
 

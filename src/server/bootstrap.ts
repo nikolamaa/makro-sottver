@@ -68,7 +68,7 @@ export async function createRuntime(config: AppConfig, log: Logger = () => {}): 
 
   // Search index starts with the builtin embedder so the app is usable immediately.
   const index = new MacroIndex({ embedder: createBuiltinEmbedder(), cache: embeddingRepo });
-  const library = new LibraryService(macroRepo, categoryRepo, index, cipher);
+  const library = new LibraryService(macroRepo, categoryRepo, index, cipher, (fn) => db.tx(fn));
 
   const ai = new AiService({
     getSettings: () => settingsRepo.get(),
@@ -98,8 +98,8 @@ export async function createRuntime(config: AppConfig, log: Logger = () => {}): 
       log,
     });
     if (generation !== embedderGeneration) return;
-    const current = index.embedder;
-    if (preferred.provider === current.provider && preferred.model === current.model) return;
+    // Always swap, even to an identical builtin embedder: its status carries the fallback reason shown in the UI.
+    // Re-indexing is cheap because vectors are cached per (model, content).
     await index.setEmbedder(preferred);
     log(`Search embeddings: ${preferred.provider} (${preferred.model}).`);
   };

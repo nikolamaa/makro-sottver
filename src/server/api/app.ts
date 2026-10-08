@@ -19,7 +19,7 @@ import {
 } from '../../shared/types.js';
 import { AiError } from '../ai/provider.js';
 import type { AiService } from '../ai/aiService.js';
-import { createBackup } from '../crypto/backup.js';
+import { createBackup, readBackup } from '../crypto/backup.js';
 import type { EventRepo, LlmUsageRepo, SettingsRepo } from '../db/repos.js';
 import { parseImport, toExportJson } from '../importexport/importer.js';
 import { AssistService, BadRequestError } from '../services/assist.js';
@@ -261,6 +261,17 @@ export async function buildApp(ctx: AppContext): Promise<FastifyInstance> {
   app.post('/api/import/commit', async (req) => {
     const body = parse(ImportCommitSchema, req.body) as ImportCommitRequest;
     return ctx.library.importItems(body, 'import');
+  });
+  app.post('/api/import/backup', { bodyLimit: 40 * 1024 * 1024 }, async (req) => {
+    const body = parse(z.object({ backup: z.string().min(1).max(40 * 1024 * 1024), recoveryKey: z.string().min(1).max(200) }), req.body);
+    let library: unknown;
+    try {
+      library = readBackup<{ library?: unknown }>(body.backup, body.recoveryKey).payload.library;
+    } catch (err) {
+      throw new BadRequestError(err instanceof Error ? err.message : 'Could not open the backup');
+    }
+    if (!library || typeof library !== 'object') throw new BadRequestError('The backup does not contain a macro library');
+    return parseImport('json', JSON.stringify(library), ctx.library.titles());
   });
   app.get('/api/export', async (req, reply) => {
     const q = req.query as { format?: string };

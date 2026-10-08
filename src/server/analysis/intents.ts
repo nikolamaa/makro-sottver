@@ -21,7 +21,7 @@ const MAX_INTENTS = 3;
 const HOW_RE =
   /\b(?:how (?:do|can|to|does|should|would|will)\b|steps?\b|step by step|guide|instructions?|tutorial|explain|walk me through|help me|can i\b|could i\b|is it possible|possible to|where (?:do|can) i\b|what do i need)/;
 const ELAPSED_RE =
-  /\b(?:\d+|an?|one|two|three|four|five|few|couple(?: of)?|several|many)\s*(?:hours?|hrs?|days?|weeks?|months?|mins?|minutes?)\b|\b\d+\s*[hd]\b|\b(?:ago|since|yesterday|last (?:night|week|month)|for (?:hours|days|weeks|ages|so long|a while|a long time)|all day|forever|ages)\b/;
+  /\b(?:\d+|an?|one|two|three|four|five|few|couple(?: of)?|several|many)\s*(?:hours?|hrs?|days?|weeks?|months?|mins?|minutes?)\b|\b\d+\s*[hd]\b|\b(?:ago|since|yesterday|last (?:night|week|month)|(?:for|been) (?:hours|days|weeks|months|ages|so long|a while|a long time)|all day|forever|ages)\b/;
 const WHEN_RE = /\b(?:when|how long|eta|by when)\b/;
 const PENDING_EXTRA_RE =
   /\b(?:still (?:not|no|haven't|hasn't|waiting|pending)|taking (?:forever|ages|too long)|waiting|awaiting|in progress|not (?:yet )?(?:approved|processed|confirmed|completed)|status of)\b/;
@@ -30,6 +30,8 @@ const MISSING_EXTRA_RE =
 const GAMBLING_LOSS_RE = /\blost (?:on|at|in|playing|betting|gambling|it all|everything|a bet|my bets?)\b/;
 const WRONG_NETWORK_RE =
   /\b(?:wrong|different|incorrect|unsupported) (?:network|chain|blockchain|address|coin|currency|token|memo|tag)\b|\b(?:forgot|forget|without|missing|no|didn't (?:add|put|include|enter)|did not (?:add|put|include|enter))(?: to (?:add|put|include|enter))? (?:the |a |my )?(?:memo|tag|destination tag)\b/;
+/** Crypto sent by mistake (wrong coin/address): a recovery case, handled like a missing deposit. */
+const MISTAKEN_SEND_RE = /\b(?:accidentally|mistakenly|by mistake|by accident|wrongly)\b/;
 const DEPOSIT_EXTRA_RE =
   /\b(?:deposit address|my stake (?:wallet|address)|sent (?:it |them |the (?:money|funds|coins?|crypto) )?to (?:my )?stake|sent (?:about |around |over )?\d[\d.,]*\s?k?\s?(?:usdt|usdc|btc|eth|ltc|xrp|trx|doge|sol|bnb|bch|ada|eos|matic|pol|dai|shib|crypto|coins?|euros?|eur|dollars?|usd|inr|rupees?|cad|brl|ngn))\b/;
 /** "cash out" about a sports bet (cashout button/offer), not a withdrawal. */
@@ -49,7 +51,7 @@ const ACCESS_VERIFY_RE = /\b(?:verification (?:code|email|link|sms)|verify (?:my
 const FAIRNESS_VERIFY_RE = /\b(?:provabl[ey] fair\w*|(?:server|client) seeds?|verify (?:the |my |a )?(?:bet|result|game|hash|outcome|seed))\b/;
 const DEPOSIT_ADDRESS_RE = /\bdeposit address\b/;
 const ACCESS_EXTRA_RE =
-  /\b(?:(?:can't|cannot|unable to|not able to|couldn't) (?:access|get into|open) (?:my )?account|code (?:not|never) (?:received|arriving|coming)|(?:didn't|did not|don't|haven't) (?:get|receive) (?:the |a |any )?(?:code|email|sms)|change (?:my )?(?:email|phone|password)|reset (?:my )?(?:2fa|password|pw|pass|passwd|email)|disable 2fa|account(?: \S+)? (?:is |was |got |has been |been )?(?:locked|disabled|suspended|frozen|banned|deactivated)|locked (?:my )?account)\b/;
+  /\b(?:(?:can't|cannot|unable to|not able to|couldn't) (?:access|get into|open) (?:my )?account|code (?:not|never) (?:received|arriving|coming)|(?:didn't|did not|don't|haven't) (?:get|receive) (?:the |a |any |my )?(?:(?:verification|confirmation|login|security|2fa|sms|email) )?(?:code|email|sms)|change (?:my |the )?(?:email|phone|password)|reset (?:my )?(?:2fa|password|pw|pass|passwd|email)|disable 2fa|account(?: \S+)? (?:is |was |got |has been |been )?(?:locked|disabled|suspended|frozen|banned|deactivated)|locked (?:my )?account)\b/;
 const TWO_FA_SETUP_RE =
   /\b(?:turn on|enable|set ?up|add|activate)\s+(?:the\s+|a\s+)?(?:2fa|two[- ]factor|authenticator|google authenticator|passkeys?)\b|\b(?:2fa|two[- ]factor)\b.{0,40}\b(?:set (?:it )?up|turn (?:it )?on|enable|activate)\b/;
 const PHISHING_RE = /\b(?:e-?mail|message|sms|text|dm|link|website|site)\b.{0,160}?\b(?:legit|genuine|official|real|fake|phishing|scam)\b/;
@@ -58,9 +60,9 @@ const CLOSURE_EXTRA_RE =
 const KYC_EXTRA_RE =
   /\b(?:(?:utility|internet|phone|electricity|gas|water) bill|address (?:check|verification|proof)|proof of (?:residence|address)|verify (?:my )?(?:address|identity|id)|(?:id|identity) verification|documents? (?:rejected|declined|pending)|upload(?:ed|ing)? (?:my )?(?:documents?|id|passport))\b/;
 const RG_EXTRA_RE =
-  /\b(?:block|exclude|restrict|lock|close|disable)\s+(?:me\s+from\s+|myself\s+from\s+)?(?:only\s+)?(?:the\s+)?(?:casino|sports?|sportsbook|poker)(?:\s+(?:part|section|side|products?))?\b|\b(?:lock|block|close|freeze|suspend)\s+(?:my\s+)?(?:account|acc)\s+(?:for\s+(?:good|a\s+(?:week|month|while|year)|\d+\s+\w+)|permanently|temporarily)|\b(?:need|want)\s+a\s+break\b|\bi\s+think\s+i\s+(?:have|got)\s+a\s+(?:gambling\s+)?problem\b|\b(?:stop|quit)\s+(?:gambling|betting|playing)\b|\bself[- ]?exclu\w*/;
+  /\b(?:block|exclude|restrict|lock|close|disable)\s+(?:me\s+from\s+|myself\s+from\s+)?(?:only\s+)?(?:the\s+)?(?:casino|sports?|sportsbook|poker)(?:\s+(?:part|section|side|products?))?\b|\b(?:lock|block|close|freeze|suspend)\s+(?:my\s+)?(?:account|acc)\s+(?:for\s+(?:good|a\s+(?:week|month|while|year)|\d+\s+\w+)|permanently|temporarily)|\b(?:need|want)\s+a\s+break\b|\b(?:exclude|block|ban|lock)\s+myself\b|\bi\s+think\s+i\s+(?:have|got)\s+a\s+(?:gambling\s+)?problem\b|\b(?:stop|quit)\s+(?:gambling|betting|playing)\b|\bself[- ]?exclu\w*/;
 const TECH_EXTRA_RE =
-  /\b(?:(?:wifi|wi-fi|internet|connection) (?:cut out|dropped|died|went down|disconnected|lost)|(?:lost|lose) (?:my )?(?:connection|internet|wifi)|disconnected|kicked out|logged me out|page (?:won't|doesn't|does not) load|keeps? (?:crashing|freezing|loading)|error (?:code|message)|says error)\b/;
+  /\b(?:(?:wifi|wi-fi|internet|connection) (?:cut out|dropped|died|went down|disconnected|lost)|(?:lost|lose) (?:my )?(?:connection|internet|wifi)|disconnected|kicked out|logged me out|page (?:won't|doesn't|does not) load|keeps? (?:crashing|freezing|loading)|error (?:code|message)|says error|(?:can't|cannot|unable to|not able to|couldn't) (?:access|open|reach|load) (?:the |your )?(?:site|website|page|app|stake)|buffer(?:ing|s)?)\b/;
 const AFFILIATE_EXTRA_RE =
   /\b(?:my own (?:referral |affiliate |promo )?code|(?:telegram|discord|youtube|twitch|kick) (?:channel|community|stream|server)|streamers?|influencers?|commission rate|rev(?:enue)? ?share|sub[- ]?affiliates?|(?:friend|buddy|mate|streamer)'?s? (?:link|code|referral)|referral link)\b/;
 const SECURITY_EXTRA_RE =
@@ -75,7 +77,7 @@ const BET_WORD_RE = /\b(?:bets?|betting|wager)\b/;
 const COMPLAINT_STRONG_RE =
   /\b(?:(?:file|make|submit|raise|lodge|open) (?:a |an )?(?:formal )?complaint|formal complaint|escalate|speak to (?:a |your )?(?:manager|supervisor))\b/;
 const ACCUSATION_RE = /\b(?:scam|scammers?|scammed|thie(?:f|ves)|stealing|rigged|fraud|liars?|rip ?off|ripped off)\b/;
-const ANGRY_HINT_RE = /\b(?:fuck\w*|shit\w*|wtf|disgusting|pathetic|joke)\b|!{3,}/;
+const ANGRY_HINT_RE = /\b(?:fuck\w*|shit\w*|wtf|disgusting|pathetic|joke)\b/;
 
 const BONUS_TERM_WEIGHTS: Record<string, number> = { offer: 0.8, drop: 0.6, code: 0.6, reward: 1.4, rewards: 1.4 };
 /** With login/2FA wording, "code" is a verification code, not a bonus code. */
@@ -238,7 +240,9 @@ function addWithdrawalEvidence(s: Signals, ev: Evidence): void {
 }
 
 function addDepositEvidence(s: Signals, ev: Evidence): void {
-  const net = has(s.p, 'network') && WRONG_NETWORK_RE.test(s.norm);
+  const net =
+    (has(s.p, 'network') && WRONG_NETWORK_RE.test(s.norm)) ||
+    (has(s.p, 'crypto') && (WRONG_NETWORK_RE.test(s.norm) || MISTAKEN_SEND_RE.test(s.norm)));
   if (s.deposit) {
     let missing = 0;
     if (s.missing) missing += 2.5;
@@ -280,7 +284,7 @@ function addPaymentEvidence(s: Signals, ev: Evidence): void {
 function addBonusEvidence(s: Signals, ev: Evidence): void {
   const p = s.p;
   const weights = [
-    conceptWeight(p, 'bonus', 2.2, has(p, 'access') ? BONUS_TERM_WEIGHTS_ACCESS : BONUS_TERM_WEIGHTS),
+    conceptWeight(p, 'bonus', 2.2, has(p, 'access') || s.accessVerify ? BONUS_TERM_WEIGHTS_ACCESS : BONUS_TERM_WEIGHTS),
     RELOAD_PAGE_RE.test(s.norm) ? 0 : conceptWeight(p, 'reload', 2.2),
     conceptWeight(p, 'weekly_bonus', 2.2, { weekly: 0.9 }),
     conceptWeight(p, 'monthly_bonus', 2.2, { monthly: 0.9 }),

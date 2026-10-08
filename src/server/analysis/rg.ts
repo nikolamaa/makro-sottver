@@ -44,6 +44,11 @@ const EXTRA_RISK = [
   'lost way too much',
   'need to stop gambling',
   'want to stop gambling',
+  'exclude myself',
+  'block myself',
+  'ban myself',
+  'self excluded',
+  'self-excluded',
 ];
 
 interface PhraseMatcher {
