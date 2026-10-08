@@ -1,6 +1,7 @@
 /**
  * Test fixtures for the Assist modules (imported only by *.test.ts files).
  */
+import { detectedVariables } from './variables';
 import type { Analysis, DraftResponse, PersonalizeResponse, Recommendation, RecommendResponse } from '../../../shared/types';
 
 export function analysisFixture(partial: Partial<Analysis> = {}): Analysis {
@@ -39,8 +40,10 @@ export function recommendationFixture(macroId: string, partial: Partial<Recommen
 }
 
 export function resultFixture(partial: Partial<RecommendResponse> = {}): RecommendResponse {
+  const analysis = partial.analysis ?? analysisFixture();
   return {
-    analysis: analysisFixture(),
+    analysis,
+    detectedVariables: detectedVariables(analysis.entities),
     recommendations: [recommendationFixture('a'), recommendationFixture('b', { confidence: 61 }), recommendationFixture('c', { confidence: 40 })],
     noGoodMatch: false,
     uncoveredIntents: [],

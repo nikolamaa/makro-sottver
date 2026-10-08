@@ -79,7 +79,7 @@ export async function createRuntime(config: AppConfig, log: Logger = () => {}): 
   const assist = new AssistService(library, index, ai, () => settingsRepo.get());
 
   if (config.seedOnFirstRun && config.seedFile && meta.get('seeded') === null && macroRepo.listAll({ includeArchived: true }).length === 0) {
-    const count = await seedLibrary(library, config.seedFile);
+    const count = await seedLibrary(library, config.seedFile, log);
     log(`Loaded ${count} demo macros (Stake Help Center based).`);
   }
   meta.set('seeded', meta.get('seeded') ?? '1');
@@ -141,10 +141,10 @@ export async function createRuntime(config: AppConfig, log: Logger = () => {}): 
   };
 }
 
-/** Load demo macros (export-JSON format) through the normal import path. */
-export async function seedLibrary(library: LibraryService, seedFile: string): Promise<number> {
+/** Load demo macros (export-JSON format) through the normal import path. Import notes are logged, not fatal. */
+export async function seedLibrary(library: LibraryService, seedFile: string, log: Logger = () => {}): Promise<number> {
   const preview = parseImport('json', readFileSync(seedFile, 'utf8'), []);
-  if (preview.errors.length) throw new Error(`Seed file has errors: ${preview.errors.slice(0, 3).join('; ')}`);
+  if (preview.errors.length) log(`Demo library notes: ${preview.errors.slice(0, 3).join('; ')}`);
   const items: ImportItem[] = preview.items.map((i) => ({ ...i, duplicateOf: null }));
   const res = await library.importItems({ items, onDuplicate: 'create_copy' }, 'seed');
   return res.created;

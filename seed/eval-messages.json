@@ -127,7 +127,7 @@
   },
   {
     "message": "can you tell me what documents i need for level 2 verification? also how long does the review take",
-    "expected": "NONE",
+    "expected": "Proof of Identity - Accepted Documents & Photo Requirements",
     "intent": "kyc_verification",
     "sentiment": "neutral"
   },
@@ -175,7 +175,7 @@
   },
   {
     "message": "how do i turn on 2fa on my account",
-    "expected": "NONE",
+    "expected": "How to enable 2FA on your account",
     "intent": "account_security",
     "sentiment": "neutral"
   },
@@ -397,7 +397,7 @@
   },
   {
     "message": "what network should I use to deposit USDT, is TRC20 ok?",
-    "expected": "NONE",
+    "expected": "How to deposit crypto and supported networks",
     "intent": "deposit_help",
     "sentiment": "neutral"
   },
@@ -481,7 +481,7 @@
   },
   {
     "message": "Hi, how long does a BTC withdrawal usually take to arrive in my wallet?",
-    "expected": "NONE",
+    "expected": "Crypto Withdrawal Pending or Not Received",
     "intent": "withdrawal_pending",
     "sentiment": "neutral"
   },
@@ -523,7 +523,7 @@
   },
   {
     "message": "my withdrawal of 0.05 BTC has been pending for 3 hours already, whats going on?",
-    "expected": "NONE",
+    "expected": "Crypto Withdrawal Pending or Not Received",
     "intent": "withdrawal_pending",
     "sentiment": "frustrated"
   },

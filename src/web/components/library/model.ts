@@ -248,6 +248,15 @@ function factToInput(f: FactDraft): FactInput {
   return out;
 }
 
+/**
+ * Closing a fact's editor: drop the fact when it is blank (an untouched new fact, or one the agent emptied).
+ * Returns the same array when nothing was dropped.
+ */
+export function dropBlankFact(facts: FactDraft[], uid: string): FactDraft[] {
+  const f = facts.find((x) => x.uid === uid);
+  return f && isBlankFact(f) ? facts.filter((x) => x.uid !== uid) : facts;
+}
+
 export function draftToInput(d: MacroDraft, changeNote: string): MacroInput {
   const input: MacroInput = {
     ...draftContent(d),
@@ -266,6 +275,37 @@ export function draftSignature(d: MacroDraft): string {
       .filter((f) => !isBlankFact(f))
       .map((f) => [f.id ?? null, ...FACT_CONTENT_KEYS.map((k) => f[k].trim()), f.status]),
   ]);
+}
+
+// ---------------------------------------------------------------------------
+// Picking the freshest copy of a macro
+// ---------------------------------------------------------------------------
+
+/** Prefer whichever copy of the same macro is newer (higher version, then later updatedAt; ties keep `stored`). */
+export function newerMacro(stored: Macro | undefined, loaded: Macro | null): Macro | null {
+  if (!stored) return loaded;
+  if (!loaded || loaded.id !== stored.id) return stored;
+  if (loaded.version > stored.version) return loaded;
+  if (loaded.version === stored.version && Date.parse(loaded.updatedAt) > Date.parse(stored.updatedAt)) return loaded;
+  return stored;
+}
+
+/**
+ * The newest known copy of macro `id`. `lists` (the store, the archived list) are read at call time, so a macro
+ * saved a moment ago is found even before React re-rendered; `snapshot` is the copy the editor last rendered.
+ */
+export function latestKnownMacro(id: Id, lists: readonly (readonly Macro[])[], snapshot: Macro | null): Macro | null {
+  let stored: Macro | undefined;
+  for (const list of lists) {
+    stored = list.find((m) => m.id === id);
+    if (stored) break;
+  }
+  return newerMacro(stored, snapshot?.id === id ? snapshot : null);
+}
+
+/** Signature of a macro's facts (fact edits and accuracy checks change it without creating a version). */
+export function factsSignature(m: Macro): string {
+  return JSON.stringify(m.facts.map((f) => [f.id, f.key, f.statement, f.value, f.sourceUrl, f.evidenceQuote, f.status]));
 }
 
 // ---------------------------------------------------------------------------

@@ -95,6 +95,33 @@ class FakeEmbedder implements Embedder {
   }
 }
 
+/** Test embedder whose passage or query calls wait until release(), to interleave index operations. */
+class GatedEmbedder extends FakeEmbedder {
+  blocked: EmbedKind | null = null;
+  private readonly gates: (() => void)[] = [];
+  private readonly arrivals: (() => void)[] = [];
+
+  override async embed(texts: string[], kind: EmbedKind): Promise<Float32Array[]> {
+    if (kind === this.blocked) {
+      await new Promise<void>((resolve) => {
+        this.gates.push(resolve);
+        for (const arrived of this.arrivals.splice(0)) arrived();
+      });
+    }
+    return super.embed(texts, kind);
+  }
+
+  /** Resolves once a blocked call is waiting. */
+  waiting(): Promise<void> {
+    return this.gates.length ? Promise.resolve() : new Promise((resolve) => this.arrivals.push(resolve));
+  }
+
+  release(): void {
+    this.blocked = null;
+    for (const open of this.gates.splice(0)) open();
+  }
+}
+
 class MapCache implements EmbeddingCache {
   readonly map = new Map<string, Float32Array>();
   get(model: string, key: string): Float32Array | null {
@@ -160,6 +187,36 @@ describe('MacroIndex maintenance', () => {
     await rebuilding;
     expect(index.size()).toBe(2);
     expect(await topIds(index, 'how do I verify my account')).not.toContain('kyc');
+  });
+
+  it('lets a remove() issued while an upsert of the same macro is embedding win', async () => {
+    const gated = new GatedEmbedder();
+    const index = new MacroIndex({ embedder: gated });
+    await index.rebuild(LIBRARY, keyOf);
+    gated.blocked = 'passage';
+    const saving = index.upsert(macro('vip', 'VIP host', ['vip_program'], 'Your VIP host will contact you.'), 'vip:1');
+    await gated.waiting();
+    index.remove('vip');
+    gated.release();
+    await saving;
+    expect(index.size()).toBe(3);
+    expect(await topIds(index, 'can I get a vip host')).not.toContain('vip');
+  });
+
+  it('re-embeds the query when the embedder is swapped while the query is being embedded', async () => {
+    const old = new GatedEmbedder();
+    const index = new MacroIndex({ embedder: old });
+    await index.rebuild(LIBRARY, keyOf);
+    old.blocked = 'query';
+    const searching = index.search('my withdrawal is pending', analysisOf(), OPTS);
+    await old.waiting();
+    const next = new FakeEmbedder('ollama', 'next-model');
+    await index.setEmbedder(next);
+    old.release();
+    const res = await searching;
+    expect(next.queries).toEqual(['my withdrawal is pending']);
+    expect(res.recommendations[0]).toMatchObject({ macroId: 'wd', breakdown: { semantic: expect.any(Number) } });
+    expect(res.recommendations[0]!.breakdown.semantic).toBeGreaterThan(0);
   });
 
   it('returns an empty result for an empty index', async () => {
@@ -300,6 +357,16 @@ describe('MacroIndex recommendations', () => {
     // usage = 0.6 * log1p(uses)/log1p(maxUses) + 0.4 * favorite
     expect(res.recommendations.map((r) => r.macroId)).toEqual(['c', 'b', 'a']);
     expect(res.recommendations.map((r) => r.breakdown.usage)).toEqual([0.6, 0.4, 0]);
+  });
+
+  it("does not boost 'general' macros because a question could not be classified", async () => {
+    const index = new MacroIndex({ embedder: createBuiltinEmbedder() });
+    await index.rebuild([macro('bet-id', 'How to find your sports bet ID', ['general'], 'Open My Bets and copy the bet ID.'), ...LIBRARY], keyOf);
+    const message = "what's the weather in Paris tomorrow?";
+    const analysis: Analysis = { ...analysisOf([['general', 0.3]]), questions: [{ text: message, intent: 'general' }] };
+    const res = await index.search(message, analysis, OPTS);
+    expect(res.recommendations.map((r) => [r.macroId, r.breakdown.intent])).toEqual([['bet-id', 0.3]]);
+    expect(res.noGoodMatch).toBe(true);
   });
 
   it('expands customer slang to the canonical vocabulary', async () => {

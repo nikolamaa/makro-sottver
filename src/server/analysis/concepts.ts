@@ -35,6 +35,9 @@ function tokenKey(phrase: string): string {
   return (phrase.toLowerCase().match(TOKEN_RE) ?? []).join(' ');
 }
 
+/** Plural fallback ("referrals" -> "referral") only for longer words, so "mins"/"caps" never match "min"/"cap". */
+const MIN_PLURAL_LENGTH = 5;
+
 const TERM_INDEX = new Map<string, TermEntry>();
 const PREFIXES = new Set<string>();
 let MAX_TOKENS = 1;
@@ -64,8 +67,8 @@ export function scanConcepts(norm: string): ConceptHits {
   let i = 0;
   while (i < tokens.length) {
     let key = tokens[i] ?? '';
-    let best: TermEntry | undefined;
-    let bestLen = 0;
+    let best = singularFallback(key);
+    let bestLen = best ? 1 : 0;
     for (let n = 1; ; n++) {
       const hit = TERM_INDEX.get(key);
       if (hit) {
@@ -83,6 +86,12 @@ export function scanConcepts(norm: string): ConceptHits {
     }
   }
   return { byConcept, terms };
+}
+
+/** Single-token match of a regular plural whose singular is a known term. */
+function singularFallback(token: string): TermEntry | undefined {
+  if (token.length < MIN_PLURAL_LENGTH || !token.endsWith('s') || TERM_INDEX.has(token)) return undefined;
+  return TERM_INDEX.get(token.slice(0, -1));
 }
 
 function record(entry: TermEntry, byConcept: Map<string, string[]>, terms: string[], seen: Set<string>): void {

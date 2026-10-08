@@ -9,11 +9,13 @@ import { useHotkeys } from '../../hotkeys';
 import { actions } from '../../store';
 import { Badge, Button, EmptyState, Kbd, Spinner } from '../../ui';
 import { SearchIcon, StarIcon, VerificationIcon } from './Icons';
+import { isModalOpen } from './Modals';
 import { readLocal, relativeTime, writeLocal } from './model';
 import {
   EMPTY_FILTERS,
   SORT_OPTIONS,
   buildHaystack,
+  countLabel,
   filterAndSort,
   hasActiveFilters,
   isSortKey,
@@ -122,7 +124,7 @@ export const MacroSidebar = memo(function MacroSidebar({
     searchRef.current?.select();
   }, []);
 
-  useHotkeys({ '/': focusSearch }, [focusSearch]);
+  useHotkeys({ '/': () => !isModalOpen() && focusSearch() }, [focusSearch]);
 
   const setQuery = (value: string) => {
     setFilters((f) => ({ ...f, query: value }));
@@ -350,9 +352,7 @@ export const MacroSidebar = memo(function MacroSidebar({
       )}
 
       <div className="lib-sidebar-foot muted small" aria-live="polite">
-        <span>
-          {filtered || showArchived ? `${items.length} of ${macros.length}` : `${items.length}`} macro{items.length === 1 ? '' : 's'}
-        </span>
+        <span>{countLabel(items.length, macros.length, filtered || showArchived)}</span>
         <span className="spacer" />
         <span className="lib-foot-keys">
           <Kbd combo="arrowup" />

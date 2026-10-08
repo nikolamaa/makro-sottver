@@ -292,6 +292,8 @@ export interface RecommendResponse {
   noGoodMatch: boolean;
   /** Present when the message contains questions the top macro does not cover. */
   uncoveredIntents: Intent[];
+  /** Template variable values detected in the message (same mapping the server uses when personalizing). */
+  detectedVariables: Record<string, string>;
   embeddings: EmbedderStatus;
   timingMs: { analysis: number; search: number; total: number };
 }

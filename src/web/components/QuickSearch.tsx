@@ -3,7 +3,19 @@
  *   Enter = use in Assist · Mod+Enter = copy the macro text · Alt+Enter = edit in Library · Esc = close.
  * While open, keys stay inside the palette (page shortcuts do not fire) and focus stays on its input.
  */
-import { memo, useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import {
+  memo,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+} from 'react';
 import { renderTemplate } from '../../shared/template';
 import type { Macro } from '../../shared/types';
 import { matchCombo, useHotkeys } from '../hotkeys';
@@ -11,7 +23,7 @@ import { actions, useStore } from '../store';
 import { Kbd, toast } from '../ui';
 import { copyText } from './assist/clipboard';
 import { plural, verificationBadge } from './assist/format';
-import { highlightSegments, quickSearchIndexFor, searchMacros, type QuickSearchHit } from './assist/quickSearch';
+import { commandHit, highlightSegments, quickSearchIndexFor, searchMacros, type QuickSearchHit } from './assist/quickSearch';
 import { recordCopy } from './assist/requests';
 import './quicksearch.css';
 
@@ -65,7 +77,6 @@ const ResultRow = memo(function ResultRow({ hit, index, optionId, active, onHove
       data-index={index}
       className={`qs-item ${active ? 'is-active' : ''}`}
       onMouseMove={() => onHover(index)}
-      onMouseDown={(e) => e.preventDefault()}
       onClick={() => onPick(index)}
     >
       <span className={`qs-dot qs-dot-${m.verification}`} title={verification.label} />
@@ -158,15 +169,19 @@ function Palette({ onClose }: { onClose: () => void }) {
   }, [active]);
 
   const execute = useCallback(
-    (command: PaletteCommand, at: number) => {
-      const hit = hitsRef.current[at];
+    (command: PaletteCommand, hit: QuickSearchHit | undefined) => {
       if (!hit) return;
       onClose();
       runCommand(command, hit.macro);
     },
     [onClose],
   );
-  const onPick = useCallback((at: number) => execute('use', at), [execute]);
+  const onPick = useCallback((at: number) => execute('use', hitsRef.current[at]), [execute]);
+
+  // Focus trap for the mouse: clicks anywhere in the dialog (rows, footer, padding) keep focus in the input.
+  const keepInputFocus = (e: MouseEvent) => {
+    if (e.target !== inputRef.current) e.preventDefault();
+  };
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (matchCombo('mod+k', e.nativeEvent)) return; // the global toggle closes the palette
@@ -175,7 +190,7 @@ function Palette({ onClose }: { onClose: () => void }) {
     const command = commandFor(e);
     if (command) {
       e.preventDefault();
-      execute(command, active);
+      execute(command, commandHit(index, query, { query: deferredQuery, hits }, active));
     } else if (e.key === 'Escape') {
       e.preventDefault();
       onClose();
@@ -192,7 +207,14 @@ function Palette({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="qs-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="qs-dialog" role="dialog" aria-modal="true" aria-label="Search macros" onKeyDown={onKeyDown}>
+      <div
+        className="qs-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Search macros"
+        onKeyDown={onKeyDown}
+        onMouseDown={keepInputFocus}
+      >
         <div className="qs-search">
           <input
             ref={inputRef}

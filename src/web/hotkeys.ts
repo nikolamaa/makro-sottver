@@ -12,7 +12,8 @@ export const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(
 
 export type HotkeyMap = Record<string, (e: KeyboardEvent) => void>;
 
-function isEditable(target: EventTarget | null): boolean {
+/** True when keyboard input goes into a text field / editable element. */
+export function isEditable(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName;
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;

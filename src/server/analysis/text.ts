@@ -53,16 +53,16 @@ const LOWER_RE = /\p{Ll}/u;
 
 /** Upper-case acronyms that are normally written in caps and must not count as "shouting". */
 const NATURAL_ACRONYMS: ReadonlySet<string> = new Set(
-  'btc eth ltc usdt usdc trx xrp doge sol bch bnb ada eos dai usd eur gbp inr cad jpy brl try ngn vip kyc id 2fa otp vpn faq ok erc trc bep bsc poa poi uk us eu nba nfl ufc api sms pdf url iban upi pix tx txid asap'.split(
-    ' ',
-  ),
+  `btc eth ltc usdt usdc trx xrp doge sol bch bnb ada eos dai usd eur gbp inr cad jpy brl try ngn vip kyc id otp vpn faq
+  ok erc trc bep bsc poa poi uk us eu nba nfl nhl mlb ufc api sms pdf url iban upi pix tx txid asap pm am atm nft fyi btw
+  lol ip dm utc gmt swift`.split(/\s+/),
 );
 
 /**
- * Share of "shouted" words: words of 2+ letters written fully in upper case, ignoring common acronyms (BTC, KYC...).
- * Returns { ratio, words } where words is the number of words considered.
+ * "Shouted" words: words of 2+ letters written fully in upper case, ignoring common acronyms (BTC, KYC...).
+ * Returns the number of words considered, how many of them are shouted, and the ratio.
  */
-export function capsRatio(text: string): { ratio: number; words: number } {
+export function capsRatio(text: string): { ratio: number; words: number; caps: number } {
   let words = 0;
   let caps = 0;
   for (const m of text.matchAll(CAPS_WORD_RE)) {
@@ -71,7 +71,7 @@ export function capsRatio(text: string): { ratio: number; words: number } {
     words++;
     if (UPPER_RE.test(w) && !LOWER_RE.test(w)) caps++;
   }
-  return { ratio: words ? caps / words : 0, words };
+  return { ratio: words ? caps / words : 0, words, caps };
 }
 
 /** True when the message is mostly written in capital letters (used to ignore capitalization cues). */

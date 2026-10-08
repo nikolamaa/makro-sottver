@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Category, Macro } from '../../../shared/types';
-import { buildQuickSearchIndex, highlightSegments, searchMacros } from './quickSearch';
+import { buildQuickSearchIndex, commandHit, highlightSegments, searchMacros } from './quickSearch';
 
 let seq = 0;
 function macro(partial: Partial<Macro>): Macro {
@@ -90,6 +90,23 @@ describe('quick search', () => {
     const perQuery = (performance.now() - t0) / (queries.length * 5);
     expect(perQuery).toBeLessThan(25);
     expect(searchMacros(big, 'topic 1999')[0]?.macro.title).toContain('Topic 1999');
+  });
+
+  it('stays responsive for a very long single-term query (e.g. a held-down key)', () => {
+    const many = Array.from({ length: 2000 }, (_, i) => macro({ title: `Topic ${i} withdrawal`, body: `Body ${i}. `.repeat(20) }));
+    const big = buildQuickSearchIndex(many, categories);
+    const t0 = performance.now();
+    const hits = searchMacros(big, 'x'.repeat(300));
+    expect(performance.now() - t0).toBeLessThan(100); // ~400 ms before the fuzzy query was capped, ~20 ms after
+    expect(hits).toEqual([]);
+  });
+
+  it('runs palette commands on the typed query while the shown results are still for an older one', () => {
+    const shown = { query: 'kyc', hits: searchMacros(index, 'kyc') };
+    expect(commandHit(index, 'kyc', shown, 0)?.macro.id).toBe(kyc.id);
+    expect(commandHit(index, 'kyc', shown, 5)).toBeUndefined();
+    expect(commandHit(index, 'vault', shown, 0)?.macro.id).toBe(vault.id);
+    expect(commandHit(index, 'zzzzqqq', shown, 0)).toBeUndefined();
   });
 });
 

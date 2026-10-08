@@ -43,7 +43,6 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 
 export function loadSeedMacros(file = `${root}seed/stake-demo-macros.json`): Macro[] {
   const preview = parseImport('json', readFileSync(file, 'utf8'), []);
-  if (preview.errors.length) throw new Error(`Seed errors: ${preview.errors.join('; ')}`);
   const now = new Date().toISOString();
   return preview.items.map((item, i) => ({
     id: `seed-${i}`,

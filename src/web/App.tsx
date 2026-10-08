@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { actions, useStore, type Page } from './store';
-import { useHotkeys } from './hotkeys';
+import { comboLabel, useHotkeys } from './hotkeys';
 import { Badge, Kbd, Spinner, Toaster } from './ui';
 import { AssistPage } from './pages/AssistPage';
 import { LibraryPage } from './pages/LibraryPage';
@@ -10,10 +10,10 @@ import { QuickSearch } from './components/QuickSearch';
 import { Onboarding } from './components/Onboarding';
 
 const NAV: { page: Page; label: string; combo: string }[] = [
-  { page: 'assist', label: 'Assist', combo: 'alt+shift+1' },
-  { page: 'library', label: 'Library', combo: 'alt+shift+2' },
-  { page: 'import', label: 'Import / Export', combo: 'alt+shift+3' },
-  { page: 'settings', label: 'Settings', combo: 'alt+shift+4' },
+  { page: 'assist', label: 'Assist', combo: 'alt+shift+a' },
+  { page: 'library', label: 'Library', combo: 'alt+shift+l' },
+  { page: 'import', label: 'Import / Export', combo: 'alt+shift+i' },
+  { page: 'settings', label: 'Settings', combo: 'alt+shift+s' },
 ];
 
 function useTheme() {
@@ -54,7 +54,7 @@ export function App() {
               type="button"
               className={`nav-item ${page === n.page ? 'active' : ''}`}
               onClick={() => actions.navigate(n.page)}
-              title={n.combo}
+              title={comboLabel(n.combo)}
             >
               {n.label}
             </button>

@@ -1,6 +1,48 @@
 /** Confirmation dialogs used by the Library: unsaved-changes guard and permanent delete. */
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Button, Kbd, Modal, Spinner } from '../../ui';
+
+/** True while any modal dialog is open (page hotkeys that move focus must not reach the page behind it). */
+export function isModalOpen(): boolean {
+  return typeof document !== 'undefined' && document.querySelector('.modal-backdrop') !== null;
+}
+
+/**
+ * Where focus goes when a dialog closes: nowhere when something already took it (e.g. the editor's title),
+ * else back to the element focused before the dialog opened, else the fallback (the macro list).
+ */
+export function focusAfterModal<T extends { isConnected: boolean }>(previous: T | null, focusLost: boolean, fallback: T | null): T | null {
+  if (!focusLost) return null;
+  if (previous?.isConnected) return previous;
+  return fallback?.isConnected ? fallback : null;
+}
+
+function currentFocus(): HTMLElement | null {
+  if (typeof document === 'undefined') return null;
+  const el = document.activeElement;
+  return el instanceof HTMLElement && el !== document.body ? el : null;
+}
+
+/** Keyboard-first: closing a dialog must not drop focus on <body>. */
+function useRestoreFocus(open: boolean): void {
+  const previousRef = useRef<HTMLElement | null>(null);
+  const wasOpen = useRef(false);
+  // Captured while rendering the opening dialog: by the time effects run, autoFocus already moved focus into it.
+  if (open && !wasOpen.current) previousRef.current = currentFocus();
+  wasOpen.current = open;
+  useEffect(() => {
+    if (!open) return;
+    const previous = previousRef.current;
+    return () => {
+      // After the dialog's action ran (it may focus something itself, e.g. the new macro's title).
+      requestAnimationFrame(() => {
+        const active = document.activeElement;
+        const lost = !active || active === document.body || !active.isConnected;
+        focusAfterModal(previous, lost, document.getElementById('lib-listbox') ?? document.getElementById('lib-search'))?.focus();
+      });
+    };
+  }, [open]);
+}
 
 export function UnsavedChangesModal({
   open,
@@ -19,6 +61,7 @@ export function UnsavedChangesModal({
   onDiscard: () => void;
   onSave: () => void;
 }) {
+  useRestoreFocus(open);
   useEffect(() => {
     if (open) requestAnimationFrame(() => document.getElementById(canSave ? 'lib-unsaved-save' : 'lib-unsaved-keep')?.focus());
   }, [open, canSave]);
@@ -65,6 +108,7 @@ export function DeleteMacroModal({
   onConfirm: () => void;
 }) {
   const [typed, setTyped] = useState('');
+  useRestoreFocus(open);
   useEffect(() => {
     if (open) setTyped('');
   }, [open]);

@@ -28,8 +28,11 @@ export function AssistPage() {
 
   const macroById = useMemo(() => new Map<Id, Macro>(macros.map((m) => [m.id, m])), [macros]);
   const categoryById = useMemo(() => new Map<Id, Category>(categories.map((c) => [c.id, c])), [categories]);
-  const entities = state.result?.analysis.entities;
-  const detected = useMemo(() => detectedVariables(entities ?? []), [entities]);
+  const result = state.result;
+  const detected = useMemo(
+    () => result?.detectedVariables ?? detectedVariables(result?.analysis.entities ?? []),
+    [result],
+  );
   const variableNames = useMemo(
     () => variablesUsed(state.selectedIds.flatMap((id) => macroById.get(id)?.body ?? [])),
     [state.selectedIds, macroById],

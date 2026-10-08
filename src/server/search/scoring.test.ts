@@ -75,6 +75,12 @@ describe('intent matching', () => {
     expect(w.get('kyc_verification')).toBe(0.5);
   });
 
+  it("gives no floor to unclassified ('general') question spans", () => {
+    const w = intentWeights(analysisOf([['general', 0.3]], [{ text: "what's the weather in Paris?", intent: 'general' }]));
+    expect(w.get('general')).toBe(0.3);
+    expect(intentWeights(analysisOf([], [{ text: 'and that thing?', intent: 'general' }])).has('general')).toBe(false);
+  });
+
   it('counts related intents at half weight', () => {
     const w = new Map<Intent, number>([['withdrawal_pending', 0.8]]);
     expect(matchIntents(['withdrawal_pending'], w)).toEqual({ score: 0.8, relatedTo: null });

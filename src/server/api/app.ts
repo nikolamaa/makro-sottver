@@ -90,7 +90,7 @@ const EventSchema = z.object({
   editRatio: z.number().min(0).max(1).optional(),
   mode: z.enum(['fast', 'ai']).optional(),
 });
-const ImportPreviewSchema = z.object({ format: z.enum(['csv', 'json', 'text']), content: z.string().max(2_000_000) });
+const ImportPreviewSchema = z.object({ format: z.enum(['csv', 'json', 'text']), content: z.string().max(2_200_000) });
 const ImportItemSchema = z.object({
   title: str(200),
   body: str(20000),

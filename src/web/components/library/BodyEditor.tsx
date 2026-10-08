@@ -5,6 +5,7 @@ import { STANDARD_VARIABLES } from '../../../shared/types';
 import { useHotkeys } from '../../hotkeys';
 import { readLocal, writeLocal, LIMITS, SAMPLE_VALUES } from './model';
 import { TemplatePreview, usePreview } from './TemplatePreview';
+import { isModalOpen } from './Modals';
 import { VariableMenu } from './VariableMenu';
 
 const SAMPLES_KEY = 'macropilot.library.previewSamples';
@@ -69,7 +70,7 @@ export function BodyEditor({
     if (!open && restoreFocus) requestAnimationFrame(() => taRef.current?.focus());
   }, []);
 
-  useHotkeys({ 'alt+i': () => !disabled && setMenuOpen(true) }, [disabled]);
+  useHotkeys({ 'alt+i': () => !disabled && !isModalOpen() && setMenuOpen(true) }, [disabled]);
 
   /** Select the first occurrence of a variable in the textarea. */
   const reveal = (name: string) => {

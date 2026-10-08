@@ -31,6 +31,8 @@ export const DEFAULT_RESULT_LIMIT = 50;
 /** Out-of-order permutations of up to this many query terms ("pending withdrawal" finds "Withdrawal pending"). */
 const OUT_OF_ORDER_TERMS = 3;
 const MIN_BODY_QUERY = 2;
+/** uFuzzy's cost grows steeply with the length of repetitive terms (300 x "x" took ~400 ms); titles never need more. */
+const MAX_FUZZY_QUERY = 64;
 
 const fuzzy = new uFuzzy({
   intraMode: 1 as uFuzzy.IntraMode,
@@ -117,7 +119,7 @@ function fuzzyHits(index: QuickSearchIndex, query: string, limit: number): Quick
 export function searchMacros(index: QuickSearchIndex, query: string, limit = DEFAULT_RESULT_LIMIT): QuickSearchHit[] {
   const q = query.trim();
   if (!q) return index.defaultOrder.slice(0, limit).map((i) => hit(index, i));
-  const hits = fuzzyHits(index, q, limit);
+  const hits = fuzzyHits(index, q.slice(0, MAX_FUZZY_QUERY), limit);
   if (hits.length >= limit || q.length < MIN_BODY_QUERY) return hits;
   const seen = new Set(hits.map((h) => h.macro.id));
   const needle = q.toLowerCase();
@@ -127,6 +129,19 @@ export function searchMacros(index: QuickSearchIndex, query: string, limit = DEF
     if (!seen.has(macro.id) && index.bodies[macroIdx]!.includes(needle)) hits.push(hit(index, macroIdx));
   }
   return hits;
+}
+
+/**
+ * The macro a palette command (Enter, Mod+Enter, Alt+Enter) acts on: the active row of the shown results, or,
+ * while those still belong to an older query (deferred rendering), the best hit for the query as typed.
+ */
+export function commandHit(
+  index: QuickSearchIndex,
+  query: string,
+  shown: { query: string; hits: readonly QuickSearchHit[] },
+  active: number,
+): QuickSearchHit | undefined {
+  return query === shown.query ? shown.hits[active] : searchMacros(index, query, 1)[0];
 }
 
 /** Split a title into plain/highlighted segments for rendering. */

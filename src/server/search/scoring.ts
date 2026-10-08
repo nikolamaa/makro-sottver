@@ -101,13 +101,14 @@ export function confidenceOf(combined: number): number {
 
 /**
  * How strongly the customer asked about each intent: analysis.intents scores, plus question-span intents
- * (at least QUESTION_INTENT_SCORE, since the analyzer found a dedicated question for them).
+ * (at least QUESTION_INTENT_SCORE, since the analyzer found a dedicated question for them). A 'general' question
+ * is the analyzer's label for an unclassified one, so it gets no floor (it would boost every 'general' macro).
  */
 export function intentWeights(analysis: Analysis): Map<Intent, number> {
   const weights = new Map<Intent, number>();
   for (const { intent, score } of analysis.intents) weights.set(intent, Math.max(weights.get(intent) ?? 0, clamp01(score)));
   for (const q of analysis.questions) {
-    if (q.intent) weights.set(q.intent, Math.max(weights.get(q.intent) ?? 0, QUESTION_INTENT_SCORE));
+    if (q.intent && q.intent !== 'general') weights.set(q.intent, Math.max(weights.get(q.intent) ?? 0, QUESTION_INTENT_SCORE));
   }
   return weights;
 }

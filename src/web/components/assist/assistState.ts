@@ -258,7 +258,8 @@ export const NEW_MACRO_DRAFT_KEY = 'macropilot.newMacroDraft';
  */
 export function buildNewMacroDraft(state: AssistState): NewMacroDraft {
   const analysis = state.result?.analysis;
-  const values = { ...detectedVariables(analysis?.entities ?? []), ...requestVariables(state.customerName, state.overrides) };
+  const detected = state.result?.detectedVariables ?? detectedVariables(analysis?.entities ?? []);
+  const values = { ...detected, ...requestVariables(state.customerName, state.overrides) };
   const topIntent = analysis?.intents[0]?.intent;
   return {
     body: templatizeReply(state.reply.text, values),

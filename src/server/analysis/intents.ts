@@ -29,9 +29,16 @@ const MISSING_EXTRA_RE =
   /\b(?:didn't (?:get|receive)|did not (?:get|receive)|haven't (?:got|gotten|received)|never (?:got|received|came)|not (?:in|on) my (?:wallet|balance|account)|balance (?:is |shows )?(?:still )?(?:0|zero|empty)|still (?:0|zero|empty)|nothing (?:arrived|came|showed up|shows up|appeared)|(?:didn't|did not|doesn't|does not|hasn't|has not|not) (?:show|showed|shown|showing|appear|appeared) up|where (?:is|are) (?:my|the) (?:money|funds|crypto|coins?))\b/;
 const GAMBLING_LOSS_RE = /\blost (?:on|at|in|playing|betting|gambling|it all|everything|a bet|my bets?)\b/;
 const WRONG_NETWORK_RE =
-  /\b(?:wrong|different|incorrect|unsupported) (?:network|chain|blockchain|address|coin|currency|token|memo|tag)\b|\b(?:forgot|without|missing|no) (?:the )?(?:memo|tag|destination tag)\b/;
-const DEPOSIT_EXTRA_RE = /\b(?:deposit address|my stake (?:wallet|address)|sent (?:it |them |the (?:money|funds|coins?|crypto) )?to (?:my )?stake)\b/;
+  /\b(?:wrong|different|incorrect|unsupported) (?:network|chain|blockchain|address|coin|currency|token|memo|tag)\b|\b(?:forgot|forget|without|missing|no|didn't (?:add|put|include|enter)|did not (?:add|put|include|enter))(?: to (?:add|put|include|enter))? (?:the |a |my )?(?:memo|tag|destination tag)\b/;
+const DEPOSIT_EXTRA_RE =
+  /\b(?:deposit address|my stake (?:wallet|address)|sent (?:it |them |the (?:money|funds|coins?|crypto) )?to (?:my )?stake|sent (?:about |around |over )?\d[\d.,]*\s?k?\s?(?:usdt|usdc|btc|eth|ltc|xrp|trx|doge|sol|bnb|bch|ada|eos|matic|pol|dai|shib|crypto|coins?|euros?|eur|dollars?|usd|inr|rupees?|cad|brl|ngn))\b/;
+/** "cash out" about a sports bet (cashout button/offer), not a withdrawal. */
+const SPORTS_CASHOUT_RE =
+  /\bcash ?-?out (?:button|option|offer|value|feature)\b|\bcash(?:ed)? ?-?out (?:my |the |a |this )?(?:bet|parlay|multi|acca|accumulator|ticket|slip)\b/;
+const WITHDRAWAL_MONEY_RE = /\b(?:winnings|balance|money|funds|to my (?:wallet|bank|card|address))\b/;
 const FEE_RE = /\bfees?\b/;
+const WAGER_BEFORE_WITHDRAW_RE = /\bwager\w*(?:\s+\S+){0,6}?\s+(?:before|until|to)\s+(?:i\s+(?:can|could)\s+)?(?:withdraw|cash ?out)/;
+const WAGERING_EXTRA_RE = /\b(?:bonus requirements?|active bonus|requirement to wager|wager(?:ing)? progress|remaining wager)\b/;
 const WITHDRAW_BONUS_RE =
   /\b(?:withdraw\w*|cash ?out)(?:\s+\w+){0,3}?\s+(?:bonus|bonuses|reload|rakeback|free spins? winnings)\b|\bbonus(?:\s+\w+){0,4}?\s+(?:withdraw\w*|cash ?out)\b/;
 const PAYMENT_EXTRA_RE =
@@ -42,19 +49,33 @@ const ACCESS_VERIFY_RE = /\b(?:verification (?:code|email|link|sms)|verify (?:my
 const FAIRNESS_VERIFY_RE = /\b(?:provabl[ey] fair\w*|(?:server|client) seeds?|verify (?:the |my |a )?(?:bet|result|game|hash|outcome|seed))\b/;
 const DEPOSIT_ADDRESS_RE = /\bdeposit address\b/;
 const ACCESS_EXTRA_RE =
-  /\b(?:(?:can't|cannot|unable to|not able to|couldn't) (?:access|get into|open) (?:my )?account|code (?:not|never) (?:received|arriving|coming)|(?:didn't|did not|don't|haven't) (?:get|receive) (?:the |a |any )?(?:code|email|sms)|change (?:my )?(?:email|phone|password)|reset (?:my )?(?:2fa|password)|disable 2fa|account(?: \S+)? (?:is |was |got |has been |been )?(?:locked|disabled|suspended|frozen|banned|deactivated)|locked (?:my )?account)\b/;
+  /\b(?:(?:can't|cannot|unable to|not able to|couldn't) (?:access|get into|open) (?:my )?account|code (?:not|never) (?:received|arriving|coming)|(?:didn't|did not|don't|haven't) (?:get|receive) (?:the |a |any )?(?:code|email|sms)|change (?:my )?(?:email|phone|password)|reset (?:my )?(?:2fa|password|pw|pass|passwd|email)|disable 2fa|account(?: \S+)? (?:is |was |got |has been |been )?(?:locked|disabled|suspended|frozen|banned|deactivated)|locked (?:my )?account)\b/;
+const TWO_FA_SETUP_RE =
+  /\b(?:turn on|enable|set ?up|add|activate)\s+(?:the\s+|a\s+)?(?:2fa|two[- ]factor|authenticator|google authenticator|passkeys?)\b|\b(?:2fa|two[- ]factor)\b.{0,40}\b(?:set (?:it )?up|turn (?:it )?on|enable|activate)\b/;
+const PHISHING_RE = /\b(?:e-?mail|message|sms|text|dm|link|website|site)\b.{0,160}?\b(?:legit|genuine|official|real|fake|phishing|scam)\b/;
+const CLOSURE_EXTRA_RE =
+  /\b(?:account (?:deleted|closed|removed|terminated)|(?:delete|close|remove|terminate|deactivate) (?:my |this )?(?:stake )?(?:account|acc|profile)|delete (?:all )?my data|gdpr|right to be forgotten)\b/;
+const KYC_EXTRA_RE =
+  /\b(?:(?:utility|internet|phone|electricity|gas|water) bill|address (?:check|verification|proof)|proof of (?:residence|address)|verify (?:my )?(?:address|identity|id)|(?:id|identity) verification|documents? (?:rejected|declined|pending)|upload(?:ed|ing)? (?:my )?(?:documents?|id|passport))\b/;
+const RG_EXTRA_RE =
+  /\b(?:block|exclude|restrict|lock|close|disable)\s+(?:me\s+from\s+|myself\s+from\s+)?(?:only\s+)?(?:the\s+)?(?:casino|sports?|sportsbook|poker)(?:\s+(?:part|section|side|products?))?\b|\b(?:lock|block|close|freeze|suspend)\s+(?:my\s+)?(?:account|acc)\s+(?:for\s+(?:good|a\s+(?:week|month|while|year)|\d+\s+\w+)|permanently|temporarily)|\b(?:need|want)\s+a\s+break\b|\bi\s+think\s+i\s+(?:have|got)\s+a\s+(?:gambling\s+)?problem\b|\b(?:stop|quit)\s+(?:gambling|betting|playing)\b|\bself[- ]?exclu\w*/;
+const TECH_EXTRA_RE =
+  /\b(?:(?:wifi|wi-fi|internet|connection) (?:cut out|dropped|died|went down|disconnected|lost)|(?:lost|lose) (?:my )?(?:connection|internet|wifi)|disconnected|kicked out|logged me out|page (?:won't|doesn't|does not) load|keeps? (?:crashing|freezing|loading)|error (?:code|message)|says error)\b/;
+const AFFILIATE_EXTRA_RE =
+  /\b(?:my own (?:referral |affiliate |promo )?code|(?:telegram|discord|youtube|twitch|kick) (?:channel|community|stream|server)|streamers?|influencers?|commission rate|rev(?:enue)? ?share|sub[- ]?affiliates?|(?:friend|buddy|mate|streamer)'?s? (?:link|code|referral)|referral link)\b/;
 const SECURITY_EXTRA_RE =
   /\b(?:someone (?:else )?(?:accessed|used|logged into|got into|has access to)|not me|i didn't (?:make|do|authorize|place) (?:this|these|that|those)|(?:stolen|stole) (?:my )?(?:account|funds|crypto|balance)|account (?:was )?(?:stolen|taken over))\b/;
 const SPORTS_EXTRA_RE =
-  /\b(?:football|soccer|nba|nfl|nhl|mlb|ufc|mma|tennis|basketball|baseball|hockey|cricket|esports?|e-sports?|cs2|csgo|dota|valorant|league of legends|premier league|champions league|la liga|serie a|bundesliga|world cup|formula 1|f1|boxing|rugby|golf|horse racing|goals?|scored|half ?time|full time|kick-?off|fixture|player props?|prop bets?)\b/;
+  /\b(?:(?:\d+|one|two|three|four|five)[- ]legs?|legs? (?:won|lost|void|voided|won't|didn't)|football|soccer|nba|nfl|nhl|mlb|ufc|mma|tennis|basketball|baseball|hockey|cricket|esports?|e-sports?|cs2|csgo|dota|valorant|league of legends|premier league|champions league|la liga|serie a|bundesliga|world cup|formula 1|f1|boxing|rugby|golf|horse racing|goals?|scored|half ?time|full time|kick-?off|fixture|player props?|prop bets?)\b/;
 const GAME_FREEZE_RE =
   /\b(?:game|slot|spin|round|bonus round|table|stream|live game)\b[^.!?]{0,30}\b(?:froze|frozen|freez(?:e|es|ing)|stuck|crash(?:ed)?|disconnect(?:ed)?|not loading|won't load|lag(?:ging)?|black screen|kicked)\b|\b(?:froze|frozen|freez(?:e|es|ing)|stuck|crash(?:ed)?|disconnect(?:ed)?)\b[^.!?]{0,20}\b(?:game|slot|spin|round|mid[- ]?spin|mid[- ]?round)\b/;
 const BET_LIMIT_EXTRA_RE =
-  /\b(?:(?:limited|restricted|capped|reduced) (?:my )?(?:account|bets?|stakes?|betting|max(?:imum)? bet)|(?:account|bets?|stakes?) (?:is |are |got |was |were |been )*(?:limited|restricted|capped|reduced)|max(?:imum)? stake|why can't i bet more|bet (?:more|higher) than)\b/;
+  /\b(?:(?:limited|restricted|capped|reduced) (?:my )?(?:account|bets?|stakes?|betting|max(?:imum)? bet)|(?:account|bets?|stakes?) (?:is |are |got |was |were |been )*(?:limited|restricted|capped|reduced)|max(?:imum)? stake|min(?:imum)? (?:bet|stake|wager)s?|why can't i bet more|bet (?:more|higher) than)\b/;
 const BET_WORD_RE = /\b(?:bets?|betting|wager)\b/;
 const COMPLAINT_STRONG_RE =
   /\b(?:(?:file|make|submit|raise|lodge|open) (?:a |an )?(?:formal )?complaint|formal complaint|escalate|speak to (?:a |your )?(?:manager|supervisor))\b/;
-const ANGRY_HINT_RE = /\b(?:scam|scammers?|thie(?:f|ves)|stealing|rigged|fraud|liars?|fuck\w*|shit\w*|wtf|disgusting|pathetic)\b|!{3,}/;
+const ACCUSATION_RE = /\b(?:scam|scammers?|scammed|thie(?:f|ves)|stealing|rigged|fraud|liars?|rip ?off|ripped off)\b/;
+const ANGRY_HINT_RE = /\b(?:fuck\w*|shit\w*|wtf|disgusting|pathetic|joke)\b|!{3,}/;
 
 const BONUS_TERM_WEIGHTS: Record<string, number> = { offer: 0.8, drop: 0.6, code: 0.6, reward: 1.4, rewards: 1.4 };
 /** With login/2FA wording, "code" is a verification code, not a bonus code. */
@@ -78,8 +99,8 @@ const KYC_TERM_WEIGHTS_OTHER_VERIFY: Record<string, number> = { ...KYC_TERM_WEIG
 const ACCESS_TERM_WEIGHTS: Record<string, number> = { password: 1.8, otp: 2.0, 'email access': 2.0, passkey: 2.0, passkeys: 2.0, 'logged out': 1.8 };
 const SECURITY_TERM_WEIGHTS: Record<string, number> = {
   vault: 1.4,
-  'stake shield': 1.0,
-  shield: 1.0,
+  'stake shield': 0.3,
+  shield: 0.6,
   'mirror site': 1.4,
   mirror: 1.2,
   oauth: 1.4,
@@ -124,6 +145,7 @@ const WAGERING_TERM_WEIGHTS: Record<string, number> = {
 const BONUS_CONCEPTS = ['bonus', 'reload', 'weekly_bonus', 'monthly_bonus', 'rakeback', 'welcome_offer', 'birthday'] as const;
 const RG_TIMEOUT_TERMS = new Set(['time out', 'timeout']);
 const DEPOSIT_PAST_TERMS = new Set(['deposited', 'topped up', 'funded', 'transferred', 'sent funds', 'sent crypto']);
+const CASHOUT_TERMS = new Set(['cashout', 'cash out', 'cash-out', 'cashed out']);
 
 type Evidence = Map<Intent, number>;
 
@@ -141,6 +163,12 @@ interface Signals {
   whenAsk: boolean;
   txHash: boolean;
   bonus: boolean;
+  /** "cash out" refers to a sports bet cashout, not a withdrawal. */
+  sportsCashout: boolean;
+  /** Login/2FA verification wording ("verification code", "verify my email"). */
+  accessVerify: boolean;
+  /** Asks whether an email/message/link is genuine. */
+  phishing: boolean;
   rg: RgRisk;
 }
 
@@ -150,10 +178,11 @@ function addTo(ev: Evidence, intent: Intent, weight: number): void {
 
 function collectSignals(p: Prepared, rg: RgRisk): Signals {
   const norm = p.norm;
+  const sportsCashout = isSportsCashout(p);
   return {
     p,
     norm,
-    withdrawal: has(p, 'withdrawal'),
+    withdrawal: has(p, 'withdrawal') && !sportsCashout,
     deposit: has(p, 'deposit') || DEPOSIT_EXTRA_RE.test(norm),
     pending: has(p, 'pending') || PENDING_EXTRA_RE.test(norm),
     missing: mentionsMissingFunds(p, rg),
@@ -163,8 +192,17 @@ function collectSignals(p: Prepared, rg: RgRisk): Signals {
     whenAsk: WHEN_RE.test(norm),
     txHash: has(p, 'tx_hash') || TX_HASH_TEST_RE.test(p.raw),
     bonus: BONUS_CONCEPTS.some((c) => has(p, c)) && !onlyReloadPage(p),
+    sportsCashout,
+    accessVerify: ACCESS_VERIFY_RE.test(norm),
+    phishing: PHISHING_RE.test(norm),
     rg,
   };
+}
+
+function isSportsCashout(p: Prepared): boolean {
+  const terms = termsOf(p, 'withdrawal');
+  if (!terms.length || !terms.every((t) => CASHOUT_TERMS.has(t)) || WITHDRAWAL_MONEY_RE.test(p.norm)) return false;
+  return has(p, 'sports') || SPORTS_CASHOUT_RE.test(p.norm) || BET_WORD_RE.test(p.norm);
 }
 
 /** "lost" counts as missing funds only outside gambling-loss wording ("lost on a bet", RG risk). */
@@ -196,7 +234,7 @@ function addWithdrawalEvidence(s: Signals, ev: Evidence): void {
   if (s.how) addTo(ev, 'withdrawal_help', busy ? 1.0 : 2.2);
   else addTo(ev, 'withdrawal_help', busy ? 0.3 : 1.4);
   if (FEE_RE.test(s.norm)) addTo(ev, 'withdrawal_help', 1.0);
-  if (WITHDRAW_BONUS_RE.test(s.norm)) addTo(ev, 'wagering_requirement', 1.2);
+  if (WITHDRAW_BONUS_RE.test(s.norm) || WAGER_BEFORE_WITHDRAW_RE.test(s.norm)) addTo(ev, 'wagering_requirement', 1.2);
 }
 
 function addDepositEvidence(s: Signals, ev: Evidence): void {
@@ -207,7 +245,7 @@ function addDepositEvidence(s: Signals, ev: Evidence): void {
     if (s.pending) missing += missing ? 0.5 : 2.0;
     if (s.elapsed && !s.how) missing += 1.0;
     if (s.txHash) missing += 1.0;
-    if (net) missing += 1.2;
+    if (net) missing += 2.5;
     addTo(ev, 'deposit_missing', missing);
     const busy = missing >= 2;
     const help = s.how ? (busy ? 1.0 : 2.2) : busy ? 0.3 : 1.4;
@@ -220,7 +258,7 @@ function addDepositEvidence(s: Signals, ev: Evidence): void {
   if (s.withdrawal) return;
   const crypto = has(s.p, 'crypto') || s.txHash;
   if (s.txHash) addTo(ev, 'deposit_missing', 0.8);
-  if (net) addTo(ev, 'deposit_missing', 1.2);
+  if (net) addTo(ev, 'deposit_missing', 2.0);
   if ((s.missing || s.pending) && crypto) {
     addTo(ev, 'deposit_missing', 1.2);
     addTo(ev, 'withdrawal_pending', 0.8);
@@ -233,7 +271,9 @@ function depositIsBackground(s: Signals): boolean {
 }
 
 function addPaymentEvidence(s: Signals, ev: Evidence): void {
-  addTo(ev, 'payment_methods', conceptWeight(s.p, 'fiat', 2.2, PAYMENT_TERM_WEIGHTS));
+  const fiat = conceptWeight(s.p, 'fiat', 2.2, PAYMENT_TERM_WEIGHTS);
+  const moneyIssue = (s.deposit || s.withdrawal) && (s.missing || s.pending);
+  addTo(ev, 'payment_methods', moneyIssue ? fiat * 0.5 : fiat);
   if (PAYMENT_EXTRA_RE.test(s.norm)) addTo(ev, 'payment_methods', 2.0);
 }
 
@@ -253,25 +293,30 @@ function addBonusEvidence(s: Signals, ev: Evidence): void {
 
   const wagering = conceptWeight(p, 'wagering', 2.6, WAGERING_TERM_WEIGHTS);
   if (wagering) addTo(ev, 'wagering_requirement', wagering + (s.bonus ? 0.8 : 0));
+  if (WAGERING_EXTRA_RE.test(s.norm)) addTo(ev, 'wagering_requirement', 2.0);
+}
+
+function addVipAndKycEvidence(s: Signals, ev: Evidence): void {
+  addTo(ev, 'vip_program', conceptWeight(s.p, 'vip', 2.2, VIP_TERM_WEIGHTS));
+  const otherVerify = s.accessVerify || s.phishing || FAIRNESS_VERIFY_RE.test(s.norm);
+  addTo(ev, 'kyc_verification', conceptWeight(s.p, 'kyc', 2.5, otherVerify ? KYC_TERM_WEIGHTS_OTHER_VERIFY : KYC_TERM_WEIGHTS));
+  if (KYC_EXTRA_RE.test(s.norm)) addTo(ev, 'kyc_verification', 2.2);
 }
 
 function addAccountEvidence(s: Signals, ev: Evidence): void {
   const p = s.p;
-  addTo(ev, 'vip_program', conceptWeight(p, 'vip', 2.2, VIP_TERM_WEIGHTS));
-
-  const accessVerify = ACCESS_VERIFY_RE.test(s.norm);
-  const otherVerify = accessVerify || FAIRNESS_VERIFY_RE.test(s.norm);
-  addTo(ev, 'kyc_verification', conceptWeight(p, 'kyc', 2.5, otherVerify ? KYC_TERM_WEIGHTS_OTHER_VERIFY : KYC_TERM_WEIGHTS));
-
+  const twoFaSetup = TWO_FA_SETUP_RE.test(s.norm);
   addTo(ev, 'account_access', conceptWeight(p, 'access', 2.5, ACCESS_TERM_WEIGHTS));
   if (ACCESS_EXTRA_RE.test(s.norm)) addTo(ev, 'account_access', 2.0);
-  else if (accessVerify) addTo(ev, 'account_access', 1.0);
+  else if (s.accessVerify && !twoFaSetup) addTo(ev, 'account_access', 1.0);
   if (termsOf(p, 'account').some((t) => t !== 'account')) addTo(ev, 'account_access', 0.8);
 
   addTo(ev, 'account_security', conceptWeight(p, 'security', 2.5, SECURITY_TERM_WEIGHTS));
   if (SECURITY_EXTRA_RE.test(s.norm)) addTo(ev, 'account_security', 2.0);
+  if (twoFaSetup) addTo(ev, 'account_security', 3.0);
+  if (s.phishing) addTo(ev, 'account_security', 2.5);
 
-  if (has(p, 'closure')) addTo(ev, 'account_closure', 3.0);
+  if (has(p, 'closure') || CLOSURE_EXTRA_RE.test(s.norm)) addTo(ev, 'account_closure', 3.0);
 }
 
 function addResponsibleGamblingEvidence(s: Signals, ev: Evidence): void {
@@ -279,7 +324,7 @@ function addResponsibleGamblingEvidence(s: Signals, ev: Evidence): void {
   const timeoutOnly = termsOf(p, 'responsible_gambling').every((t) => RG_TIMEOUT_TERMS.has(t));
   const technicalTimeout = timeoutOnly && has(p, 'technical');
   addTo(ev, 'responsible_gambling', technicalTimeout ? 0.3 : conceptWeight(p, 'responsible_gambling', 3.0, RG_TERM_WEIGHTS));
-  if (s.rg.risk) addTo(ev, 'responsible_gambling', 3.0);
+  if (s.rg.risk || RG_EXTRA_RE.test(s.norm)) addTo(ev, 'responsible_gambling', 3.0);
   if (s.rg.critical) addTo(ev, 'responsible_gambling', 1.5);
 }
 
@@ -287,6 +332,11 @@ function addProductEvidence(s: Signals, ev: Evidence): void {
   const p = s.p;
   addTo(ev, 'sports_betting', conceptWeight(p, 'sports', 2.0, SPORTS_TERM_WEIGHTS));
   if (SPORTS_EXTRA_RE.test(s.norm)) addTo(ev, 'sports_betting', 1.4);
+  if (s.sportsCashout || termsOf(p, 'security').includes('stake shield')) addTo(ev, 'sports_betting', 2.0);
+  if (has(p, 'bet_id')) {
+    addTo(ev, 'sports_betting', 0.9);
+    addTo(ev, 'casino_games', 0.6);
+  }
 
   addTo(ev, 'casino_games', conceptWeight(p, 'casino', 2.0, CASINO_TERM_WEIGHTS));
   if (PROVIDER_TEST_RE.test(p.raw) || GAME_TEST_RE.test(p.raw)) addTo(ev, 'casino_games', 1.0);
@@ -301,18 +351,21 @@ function addProductEvidence(s: Signals, ev: Evidence): void {
   if (s.limit && productContext && !s.withdrawal && !s.deposit) addTo(ev, 'betting_limits', 1.0);
 
   addTo(ev, 'technical_issue', conceptWeight(p, 'technical', 2.0, TECH_TERM_WEIGHTS));
+  if (TECH_EXTRA_RE.test(s.norm)) addTo(ev, 'technical_issue', 2.5);
   addTo(ev, 'affiliate', conceptWeight(p, 'affiliate', 2.5, AFFILIATE_TERM_WEIGHTS));
+  if (AFFILIATE_EXTRA_RE.test(s.norm)) addTo(ev, 'affiliate', 2.5);
 }
 
 /** Complaint is usually secondary: damped when another intent already has solid evidence. */
 function addComplaintEvidence(s: Signals, ev: Evidence): void {
   let raw = conceptWeight(s.p, 'complaint', 1.2);
   if (raw) raw += 0.15 * Math.max(0, termsOf(s.p, 'complaint').length - 1);
-  if (ANGRY_HINT_RE.test(s.norm)) raw += 0.8;
+  if (ACCUSATION_RE.test(s.norm)) raw += 1.5;
+  else if (ANGRY_HINT_RE.test(s.norm)) raw += 0.8;
   if (COMPLAINT_STRONG_RE.test(s.norm)) raw += 2.0;
   if (!raw) return;
   const strongOther = [...ev.values()].some((w) => w >= 2);
-  addTo(ev, 'complaint', strongOther ? raw * 0.6 : raw);
+  addTo(ev, 'complaint', strongOther ? raw * 0.7 : raw);
 }
 
 const EVIDENCE_RULES: readonly ((s: Signals, ev: Evidence) => void)[] = [
@@ -320,6 +373,7 @@ const EVIDENCE_RULES: readonly ((s: Signals, ev: Evidence) => void)[] = [
   addDepositEvidence,
   addPaymentEvidence,
   addBonusEvidence,
+  addVipAndKycEvidence,
   addAccountEvidence,
   addResponsibleGamblingEvidence,
   addProductEvidence,

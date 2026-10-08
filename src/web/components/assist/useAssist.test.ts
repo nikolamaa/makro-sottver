@@ -3,6 +3,7 @@ import type { HealthResponse } from '../../../shared/api';
 import { getState, setState } from '../../store';
 import { toast } from '../../ui';
 import { assistReducer, INITIAL_ASSIST_STATE, NEW_MACRO_DRAFT_KEY, type AssistAction, type AssistState } from './assistState';
+import { shouldAdoptClipboard } from './clipboard';
 import { draftFixture, personalizeFixture, resultFixture } from './testFixtures';
 import { createAssistActions } from './useAssist';
 
@@ -105,6 +106,12 @@ describe('copy', () => {
     await vi.waitFor(() => expect(calls.map((c) => c.route)).toContain('GET /api/macros'));
     expect(eventBodies()).toEqual([{ type: 'reply_copied', macroIds: ['a'], editRatio: 0, mode: 'fast', rank: 0, confidence: 82 }]);
     expect(JSON.stringify(eventBodies())).not.toContain('Marko');
+  });
+
+  it('remembers the copied reply so clipboard auto-read never loads it as the next customer message', async () => {
+    const { actions } = setup(withReply('Hi Marko, the payout is on its way.'));
+    await actions.copy();
+    expect(shouldAdoptClipboard('Hi Marko, the payout is on its way.', { message: 'next customer', reply: '' })).toBe(false);
   });
 
   it('asks for a second press when placeholders remain', async () => {

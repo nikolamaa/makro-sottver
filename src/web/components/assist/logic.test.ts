@@ -1,6 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Entity, Recommendation, RecommendResponse } from '../../../shared/types';
-import { decideCopy, COPY_CONFIRM_WINDOW_MS, MAX_MESSAGE_CHARS, shouldAdoptClipboard } from './clipboard';
+import {
+  copyText,
+  decideCopy,
+  COPY_CONFIRM_WINDOW_MS,
+  MAX_MESSAGE_CHARS,
+  rememberAppCopy,
+  shortcutReadsClipboard,
+  shouldAdoptClipboard,
+} from './clipboard';
 import { formatCost, modeLabel, percent, plural, timingLabel, verificationBadge } from './format';
 import { selectOnly, stepSelection, toggleCombine, uncoveredHint } from './selection';
 import { selectNextOccurrence, selectNextPlaceholder, type SelectableText } from './textSelection';
@@ -22,6 +30,21 @@ describe('variables', () => {
       entity('url', 'https://x.io'),
     ]);
     expect(vars).toEqual({ user: 'Marko', amount: '250', crypto: 'BTC', currency: 'BTC', tx_hash: '0xabc' });
+  });
+
+  it('fills values exactly as the server does: by position, raw fallback, capitalized name', () => {
+    const vars = detectedVariables([
+      { type: 'email', value: '', raw: 'Ana@Mail.com ', start: 30, end: 43 },
+      { type: 'name', value: 'john smith', raw: 'john smith', start: 11, end: 21 },
+      { type: 'name', value: 'Ana', raw: 'Ana', start: 50, end: 53 },
+    ]);
+    expect(vars).toEqual({ user: 'John Smith', email: 'Ana@Mail.com' });
+    expect(detectedVariables([entity('name', 'McDonald')]).user).toBe('McDonald');
+  });
+
+  it('strips a name typed in lowercase from a new-macro body (the server capitalizes it in the reply)', () => {
+    const values = detectedVariables([entity('name', 'marko')]);
+    expect(templatizeReply('Hi Marko, thanks for waiting.', values)).toBe('Hi {{user}}, thanks for waiting.');
   });
 
   it('keeps a fiat currency over the crypto fallback', () => {
@@ -107,12 +130,66 @@ describe('copy guard', () => {
 });
 
 describe('clipboard auto-read', () => {
+  const empty = { message: '', reply: '' };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('adopts new text only', () => {
-    expect(shouldAdoptClipboard('Where is my withdrawal?', '', '')).toBe(true);
-    expect(shouldAdoptClipboard('  ', '', '')).toBe(false);
-    expect(shouldAdoptClipboard('same text ', ' same text', '')).toBe(false);
-    expect(shouldAdoptClipboard('Hi Ana, your reply', '', 'Hi Ana, your reply')).toBe(false);
-    expect(shouldAdoptClipboard('x'.repeat(MAX_MESSAGE_CHARS + 1), '', '')).toBe(false);
+    expect(shouldAdoptClipboard('Where is my withdrawal?', empty)).toBe(true);
+    expect(shouldAdoptClipboard('  ', empty)).toBe(false);
+    expect(shouldAdoptClipboard('same text ', { message: ' same text', reply: '' })).toBe(false);
+    expect(shouldAdoptClipboard('x'.repeat(MAX_MESSAGE_CHARS + 1), empty)).toBe(false);
+  });
+
+  it('ignores details the agent copied from the current message or reply', () => {
+    const current = { message: 'My deposit 0xabc123def is missing, email ana@mail.com', reply: 'Hi Ana, we are checking it.' };
+    expect(shouldAdoptClipboard('0xabc123def', current)).toBe(false);
+    expect(shouldAdoptClipboard(' ana@mail.com ', current)).toBe(false);
+    expect(shouldAdoptClipboard('we are checking it', current)).toBe(false);
+    expect(shouldAdoptClipboard('Hello, my bonus did not arrive', current)).toBe(true);
+  });
+
+  it('ignores anything the app copied itself (replies, macro bodies, entity values)', async () => {
+    const writes: string[] = [];
+    vi.stubGlobal('navigator', { clipboard: { writeText: async (t: string) => void writes.push(t) } });
+    expect(await copyText('Hi Ana, your withdrawal was sent.')).toBe(true);
+    expect(writes).toEqual(['Hi Ana, your withdrawal was sent.']);
+    expect(shouldAdoptClipboard('Hi Ana, your withdrawal was sent.', empty)).toBe(false);
+    rememberAppCopy('Macro body copied from quick search');
+    expect(shouldAdoptClipboard('Macro body copied from quick search ', empty)).toBe(false);
+  });
+
+  it('forgets old app copies after a while', () => {
+    rememberAppCopy('oldest app copy');
+    for (let i = 0; i < 20; i++) rememberAppCopy(`copy ${i}`);
+    expect(shouldAdoptClipboard('oldest app copy', empty)).toBe(true);
+    expect(shouldAdoptClipboard('copy 19', empty)).toBe(false);
+  });
+});
+
+describe('read clipboard shortcut', () => {
+  class FakeElement {
+    constructor(
+      readonly tagName: string,
+      readonly isContentEditable = false,
+    ) {}
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('loads the clipboard from the message box or the page, but leaves other text fields to the browser', () => {
+    vi.stubGlobal('HTMLElement', FakeElement);
+    const messageBox = new FakeElement('TEXTAREA') as unknown as HTMLElement;
+    expect(shortcutReadsClipboard(messageBox, messageBox)).toBe(true);
+    expect(shortcutReadsClipboard(new FakeElement('BUTTON') as unknown as HTMLElement, messageBox)).toBe(true);
+    expect(shortcutReadsClipboard(null, messageBox)).toBe(true);
+    expect(shortcutReadsClipboard(new FakeElement('TEXTAREA') as unknown as HTMLElement, messageBox)).toBe(false);
+    expect(shortcutReadsClipboard(new FakeElement('INPUT') as unknown as HTMLElement, messageBox)).toBe(false);
+    expect(shortcutReadsClipboard(new FakeElement('DIV', true) as unknown as HTMLElement, messageBox)).toBe(false);
   });
 });
 

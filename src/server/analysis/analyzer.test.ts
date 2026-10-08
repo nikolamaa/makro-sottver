@@ -46,6 +46,8 @@ const INTENT_CASES: [string, Intent, Intent[]?][] = [
   ["I want to withdraw but it says I need to complete level 3 verification first", 'kyc_verification', ['withdrawal_help']],
   ["I can't log in, forgot my password and the reset email never arrives", 'account_access'],
   ['I lost my phone with Google Authenticator, how do I reset 2FA?', 'account_access'],
+  ['how do i turn on 2fa on my account', 'account_security'],
+  ['got an email from stake-rewards-team.net saying i need to verify my wallet within 24h or lose my balance. is this legit??', 'account_security'],
   ['Someone logged into my account and withdrew everything, I think I was hacked', 'account_security'],
   ['I got a suspicious email asking for my password, is it really from Stake?', 'account_security'],
   ['Please close my account permanently', 'account_closure'],
@@ -60,6 +62,13 @@ const INTENT_CASES: [string, Intent, Intent[]?][] = [
   ['the site is not loading, just a black screen on chrome', 'technical_issue'],
   ['Payments are temporarily unavailable when I try to deposit', 'technical_issue'],
   ['How does the affiliate program work, how much commission do I get from referrals?', 'affiliate'],
+  ['i signed up through my buddys link but also typed a promo code in the box, which one counts now?', 'affiliate'],
+  ['the cashout button on my parlay is gone now that the game started, why can I not cash out?', 'sports_betting'],
+  ['hi, sent 120 xrp but forgot to add the memo tag. can you help get it back?', 'deposit_missing'],
+  ['i want my account DELETED with all my data, not closed, deleted', 'account_closure'],
+  ['can i block only the casino part for a month but keep sports?', 'responsible_gambling'],
+  ['my wifi cut out while i had free spins going on a bgaming game, are they lost?', 'technical_issue'],
+  ["whats the minimum bet on plinko?", 'betting_limits'],
   ['I want to file a formal complaint about your support', 'complaint'],
   ["My deposit hasn't arrived, this is a scam, you are thieves!!!", 'deposit_missing', ['complaint']],
   ['Hey, I made a deposit of 100 dollars with Moonpay 30 min ago but nothing showed up in my wallet', 'deposit_missing'],
@@ -147,7 +156,10 @@ describe('splitQuestions', () => {
 
   it('splits inline numbered lists and understands curly apostrophes', () => {
     const q = splitQuestions('I have 3 questions. 1) how to change my email 2) where to find the vault 3) how do I enable 2fa');
-    expect(q.map((x) => x.intent)).toEqual(['account_access', 'account_security', 'account_access']);
+    expect(q).toEqual([
+      { text: 'I have 3 questions. 1) how to change my email', intent: 'account_access' },
+      { text: 'where to find the vault 3) how do I enable 2fa', intent: 'account_security' },
+    ]);
     expect(splitQuestions('I can’t log in. Also, what’s the rakeback for Platinum?')).toEqual([
       { text: 'I can’t log in.', intent: 'account_access' },
       { text: 'what’s the rakeback for Platinum?', intent: 'bonus_inquiry' },
@@ -190,6 +202,12 @@ describe('detectSentiment', () => {
     ['I have asked you 3 times already', 'frustrated'],
     ['I won 2 times in a row on Plinko', 'neutral'],
     ['Thanks again for the help', 'positive'],
+    ['my withdrawal got DENIED twice. its MY money', 'angry'],
+    ['I want it credited right now', 'angry'],
+    ['it is STILL not in my account', 'frustrated'],
+    ['why cant I withdraw??', 'frustrated'],
+    ['what does that even mean?', 'confused'],
+    ['I sent 0.05 BTC and USDT on TRC20 via BSC', 'neutral'],
     ['Is this a scam email? I got a message asking for my 2fa code', 'neutral'],
     ['My deposit is 100 USDT', 'neutral'],
   ] as const)('%s -> %s', (text, sentiment) => {

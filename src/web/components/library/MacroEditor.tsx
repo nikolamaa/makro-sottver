@@ -221,7 +221,11 @@ function EditorBody({ ctl, draft }: { ctl: LibraryController; draft: MacroDraft 
           >
             {t.label}
             {t.id === 'versions' && macro ? <span className="lib-tab-count">{macro.version}</span> : null}
-            {t.id === 'edit' && draft.facts.length ? <span className="lib-tab-count">{draft.facts.length} facts</span> : null}
+            {t.id === 'edit' && draft.facts.length ? (
+              <span className="lib-tab-count">
+                {draft.facts.length} fact{draft.facts.length === 1 ? '' : 's'}
+              </span>
+            ) : null}
           </button>
         ))}
       </div>

@@ -2,7 +2,7 @@
  * Facts table: atomic claims of the macro (key, statement, value, source, evidence, status).
  * Facts are edited in the draft and saved together with the macro (MacroInput.facts, existing ids kept).
  */
-import { Fragment, memo, useCallback, useState, type KeyboardEvent } from 'react';
+import { Fragment, memo, useCallback, useRef, useState, type KeyboardEvent } from 'react';
 import type { FactStatus } from '../../../shared/types';
 import { matchCombo } from '../../hotkeys';
 import { Badge, Button, Kbd } from '../../ui';
@@ -12,6 +12,7 @@ import {
   FACT_STATUS_META,
   LIMITS,
   blankFact,
+  dropBlankFact,
   formatDateTime,
   hostOf,
   isHttpUrl,
@@ -43,14 +44,30 @@ export function FactsEditor({
 }) {
   const [editing, setEditing] = useState<EditingState | null>(null);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
+
+  /** Leaving a fact's editor (Done, or opening another one) drops the fact when it is blank. */
+  const closeCurrent = useCallback(() => {
+    const uid = editingRef.current?.uid;
+    if (uid) onChange((list) => dropBlankFact(list, uid));
+  }, [onChange]);
 
   const add = () => {
+    closeCurrent();
     const f = blankFact();
     onChange((list) => [...list, f]);
     setEditing({ uid: f.uid, snapshot: null });
   };
 
-  const startEdit = useCallback((f: FactDraft) => setEditing({ uid: f.uid, snapshot: f }), []);
+  const startEdit = useCallback(
+    (f: FactDraft) => {
+      if (editingRef.current?.uid === f.uid) return;
+      closeCurrent();
+      setEditing({ uid: f.uid, snapshot: f });
+    },
+    [closeCurrent],
+  );
 
   const remove = useCallback(
     (uid: string) => {
@@ -68,9 +85,8 @@ export function FactsEditor({
   const done = () => {
     if (!editing) return;
     const uid = editing.uid;
-    const f = facts.find((x) => x.uid === uid);
     // An untouched new fact is simply dropped.
-    if (f && !f.key.trim() && !f.statement.trim() && !f.value.trim() && !f.sourceUrl.trim() && !f.evidenceQuote.trim()) remove(uid);
+    closeCurrent();
     setEditing(null);
     requestAnimationFrame(() => document.getElementById(`lib-fact-edit-${uid}`)?.focus());
   };

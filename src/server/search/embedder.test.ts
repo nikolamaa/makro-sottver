@@ -195,6 +195,27 @@ describe('ollama embedder', () => {
     await expect(down.init()).rejects.toThrow(/not reachable/);
   });
 
+  it('reports a server that stops after init as an error and recovers when it is back', async () => {
+    let up = true;
+    const fetchMock = vi.fn(async () => {
+      if (!up) throw new TypeError('fetch failed');
+      return jsonResponse({ embeddings: [[1, 0]] });
+    });
+    const e = createOllamaEmbedder({ url: 'http://127.0.0.1:11434', model: 'nomic-embed-text', fetch: fetchMock });
+    await e.init();
+
+    up = false;
+    await expect(e.embed(['where is my withdrawal'], 'query')).rejects.toThrow(/not reachable/);
+    expect(e.status()).toMatchObject({ state: 'error', detail: expect.stringMatching(/not reachable/) });
+
+    up = true;
+    fetchMock.mockClear();
+    const [v] = await e.embed(['where is my withdrawal'], 'query');
+    expect(v).toHaveLength(2);
+    expect(fetchMock).toHaveBeenCalledTimes(2); // reconnect check ('ping') + the query itself
+    expect(e.status().state).toBe('ready');
+  });
+
   it('rejects malformed responses', async () => {
     const e = createOllamaEmbedder({ url: 'http://x', model: 'm', fetch: async () => jsonResponse({ embedding: [1, 2] }) });
     await expect(e.init()).rejects.toThrow(/unexpected response/);
@@ -239,6 +260,22 @@ describe('resolveEmbedder', () => {
     );
     expect(o.provider).toBe('builtin');
     expect(o.status().detail).toMatch(/Ollama embeddings \(nomic-embed-text\) failed/);
+  });
+
+  it('never throws, even when the provider cannot be created or the logger fails', async () => {
+    const broken = { cacheDir: '/m', ollamaUrl: undefined as unknown as string };
+    const e = await resolveEmbedder({ provider: 'ollama', ollamaModel: 'nomic-embed-text' }, broken);
+    expect(e.provider).toBe('builtin');
+    expect(e.status().detail).toMatch(/^Fell back to built-in vectors: Ollama embeddings \(nomic-embed-text\) failed/);
+
+    const throwingLog = () => {
+      throw new Error('log sink closed');
+    };
+    const t = await resolveEmbedder(
+      { provider: 'auto', ollamaModel: 'x' },
+      { ...base, log: throwingLog, loadTransformers: () => Promise.reject(moduleNotFound()) },
+    );
+    expect(t.provider).toBe('builtin');
   });
 
   it("'ollama' returns the ollama embedder when the server answers", async () => {

@@ -73,7 +73,7 @@ npm run recover      # vraćanje pristupa šifrovanoj bazi pomoću ključa za op
 | `Ctrl+E` / `Alt+M` | fokus na odgovor / na poruku |
 | `Ctrl+K` | brza fuzzy pretraga svih makroa (`Enter` koristi, `Ctrl+Enter` kopira, `Alt+Enter` otvara) |
 | `Esc` | nova poruka |
-| `Alt+Shift+1..4` | Assist / Library / Import / Settings |
+| `Alt+Shift+A` / `L` / `I` / `S` | Assist / Library / Import / Settings |
 
 Na macOS-u umesto `Ctrl` koristi `⌘`.
 

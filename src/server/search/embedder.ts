@@ -93,6 +93,18 @@ class Lifecycle {
     );
     return this.pending;
   }
+
+  /**
+   * Record a failure after a successful init (e.g. the server stopped): status() reports it and the next init()
+   * runs `load` again, so the provider recovers by itself once the service is back. Rethrows `err`.
+   */
+  fail(err: unknown): never {
+    if (!this.pending) {
+      this.state = 'error';
+      this.detail = errorMessage(err);
+    }
+    throw err instanceof Error ? err : new Error(String(err));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -316,7 +328,11 @@ export function createOllamaEmbedder(opts: { url: string; model: string; fetch?:
       await embedder.init();
       const prefix = prefixes[kind];
       const out: Float32Array[] = [];
-      for (const batch of chunk(texts, OLLAMA_BATCH)) out.push(...(await request(batch.map((t) => prefix + t))));
+      try {
+        for (const batch of chunk(texts, OLLAMA_BATCH)) out.push(...(await request(batch.map((t) => prefix + t))));
+      } catch (err) {
+        life.fail(err);
+      }
       return out;
     },
   };
@@ -337,12 +353,20 @@ export interface ResolveEmbedderOptions {
   fetch?: FetchLike;
 }
 
-async function tryInit(embedder: Embedder): Promise<string | null> {
+/** Create and initialize the preferred provider; resolves to the embedder or to the reason it is unusable. */
+async function tryPreferred(
+  settings: AppSettings['embeddings'],
+  opts: ResolveEmbedderOptions,
+): Promise<{ embedder: Embedder } | { failure: string }> {
   try {
+    const embedder =
+      settings.provider === 'ollama'
+        ? createOllamaEmbedder({ url: opts.ollamaUrl, model: settings.ollamaModel, fetch: opts.fetch })
+        : createTransformersEmbedder({ cacheDir: opts.cacheDir, loadModule: opts.loadTransformers });
     await embedder.init();
-    return null;
+    return { embedder };
   } catch (err) {
-    return errorMessage(err);
+    return { failure: errorMessage(err) };
   }
 }
 
@@ -353,22 +377,22 @@ async function tryInit(embedder: Embedder): Promise<string | null> {
  *  - 'auto' -> transformers if it initializes, otherwise builtin
  */
 export async function resolveEmbedder(settings: AppSettings['embeddings'], opts: ResolveEmbedderOptions): Promise<Embedder> {
-  const log = opts.log ?? (() => {});
   if (settings.provider === 'builtin') return createBuiltinEmbedder();
 
-  const preferred =
-    settings.provider === 'ollama'
-      ? createOllamaEmbedder({ url: opts.ollamaUrl, model: settings.ollamaModel, fetch: opts.fetch })
-      : createTransformersEmbedder({ cacheDir: opts.cacheDir, loadModule: opts.loadTransformers });
-  const failure = await tryInit(preferred);
-  if (failure === null) return preferred;
+  const result = await tryPreferred(settings, opts);
+  if ('embedder' in result) return result.embedder;
 
-  const label = preferred.provider === 'ollama' ? `Ollama embeddings (${preferred.model})` : `Local neural embeddings (${preferred.model})`;
+  const label =
+    settings.provider === 'ollama' ? `Ollama embeddings (${settings.ollamaModel})` : `Local neural embeddings (${DEFAULT_TRANSFORMERS_MODEL})`;
   const detail =
     settings.provider === 'auto'
-      ? `Using built-in vectors: ${label} not available. ${failure}`
-      : `Fell back to built-in vectors: ${label} failed. ${failure}`;
-  log(detail);
+      ? `Using built-in vectors: ${label} not available. ${result.failure}`
+      : `Fell back to built-in vectors: ${label} failed. ${result.failure}`;
+  try {
+    opts.log?.(detail);
+  } catch {
+    // A failing logger must not break embedder selection.
+  }
   return createFallbackEmbedder(detail);
 }
 

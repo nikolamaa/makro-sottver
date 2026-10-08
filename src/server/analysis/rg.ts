@@ -40,6 +40,10 @@ const EXTRA_RISK = [
   'gambling addiction',
   'addicted to gambling',
   'i have a problem with gambling',
+  'lost too much',
+  'lost way too much',
+  'need to stop gambling',
+  'want to stop gambling',
 ];
 
 interface PhraseMatcher {

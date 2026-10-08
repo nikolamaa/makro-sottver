@@ -1,5 +1,6 @@
 import { memo, useState } from 'react';
 import { placeholderLabel } from '../../../shared/template';
+import { MAX_VARIABLE_CHARS } from './variables';
 
 interface VariablesPanelProps {
   /** Variables used by the selected macro(s), excluding {{user}} (it has its own input). */
@@ -47,6 +48,7 @@ export const VariablesPanel = memo(function VariablesPanel({ names, detected, ov
               <input
                 value={overrides[name] ?? ''}
                 placeholder={detected[name] ?? placeholderLabel(name)}
+                maxLength={MAX_VARIABLE_CHARS}
                 autoComplete="off"
                 spellCheck={false}
                 onChange={(e) => onChange(name, e.target.value)}

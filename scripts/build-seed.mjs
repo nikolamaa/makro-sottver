@@ -103,6 +103,20 @@ for (const g of groups) {
   }
 }
 
+// Research agents labeled some messages "NONE" because no macro of THEIR topic group fit, although a macro from
+// another group answers them. Corrected labels (reviewed manually against the whole library):
+const RELABEL = new Map([
+  ['can you tell me what documents i need for level 2 verification? also how long does the review take', 'Proof of Identity - Accepted Documents & Photo Requirements'],
+  ['how do i turn on 2fa on my account', 'How to enable 2FA on your account'],
+  ['what network should I use to deposit USDT, is TRC20 ok?', 'How to deposit crypto and supported networks'],
+  ['Hi, how long does a BTC withdrawal usually take to arrive in my wallet?', 'Crypto Withdrawal Pending or Not Received'],
+  ['my withdrawal of 0.05 BTC has been pending for 3 hours already, whats going on?', 'Crypto Withdrawal Pending or Not Received'],
+]);
+for (const m of evalMessages) {
+  const fixed = RELABEL.get(m.message);
+  if (fixed) m.expected = fixed;
+}
+
 // Off-topic messages: the recommender must answer "no good match" for these.
 for (const message of [
   "what's the weather going to be like in Belgrade tomorrow?",

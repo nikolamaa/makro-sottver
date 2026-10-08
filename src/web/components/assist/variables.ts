@@ -65,6 +65,9 @@ export function variablesUsed(bodies: readonly string[], exclude: readonly strin
   return out;
 }
 
+/** Longest variable value the server uses (it keeps 300 characters and rejects requests above 500). */
+export const MAX_VARIABLE_CHARS = 300;
+
 /** Agent-entered values sent to /api/personalize: trimmed, empty ones dropped, customer name -> {{user}}. */
 export function requestVariables(customerName: string, overrides: Readonly<Record<string, string>>): Record<string, string> {
   const out: Record<string, string> = {};

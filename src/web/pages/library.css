@@ -885,6 +885,15 @@
   border-radius: 3px;
   padding: 0 1px;
 }
+.lib-diff-add.is-space,
+.lib-diff-del.is-space {
+  text-decoration: none;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.lib-diff-note {
+  margin: 4px 0 0;
+}
 
 /* Footer ------------------------------------------------------------------ */
 .lib-editor-foot {
@@ -1011,6 +1020,22 @@
   }
   .lib-editor-foot .btn .kbd {
     display: none;
+  }
+}
+
+/* Phone width: the change note gets its own row instead of collapsing between status and Save. */
+@media (max-width: 600px) {
+  .lib-editor-foot {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  .lib-foot-status {
+    flex: 1;
+    min-width: 0;
+  }
+  .lib-changenote {
+    order: 3;
+    flex: 1 0 100%;
   }
 }
 

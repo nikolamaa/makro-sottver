@@ -2,6 +2,7 @@ import { memo, type ClipboardEvent, type RefObject } from 'react';
 import { isMac } from '../../hotkeys';
 import { Button } from '../../ui';
 import type { AssistActions } from './useAssist';
+import { MAX_VARIABLE_CHARS } from './variables';
 
 interface MessagePanelProps {
   message: string;
@@ -63,6 +64,7 @@ export const MessagePanel = memo(function MessagePanel({ message, customerName, 
           id="assist-name"
           value={customerName}
           placeholder={namePlaceholder}
+          maxLength={MAX_VARIABLE_CHARS}
           autoComplete="off"
           spellCheck={false}
           onChange={(e) => actions.setCustomerName(e.target.value)}

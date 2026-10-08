@@ -5,8 +5,8 @@
  * Unsaved changes are protected three ways:
  *  - switching macros / creating a new one / Use in Assist asks first (confirm modal),
  *  - top navigation (clicks and Alt+Shift+N hotkeys) asks first, the browser asks on reload/close (beforeunload),
- *  - anything else that unmounts the page (quick search, back button) keeps the draft in memory and restores it
- *    the next time the Library opens.
+ *  - anything else that unmounts the page (quick search, back button) keeps the draft in memory (stash.ts, which
+ *    keeps the browser's reload/close prompt armed) and restores it the next time the Library opens.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Id, Macro } from '../../../shared/types';
@@ -20,7 +20,10 @@ import {
   draftToInput,
   emptyDraft,
   errorMessage,
+  factsSignature,
   isBlankFact,
+  latestKnownMacro,
+  newerMacro,
   parseSeed,
   takeSessionJson,
   validateDraft,
@@ -29,6 +32,7 @@ import {
   type DraftSeed,
   type MacroDraft,
 } from './model';
+import { createUnsavedStash } from './stash';
 
 export const NEW_MACRO_DRAFT_KEY = 'macropilot.newMacroDraft';
 
@@ -68,7 +72,7 @@ const INITIAL: EditorState = {
 const cleared = (p: EditorState): EditorState => ({ ...INITIAL, session: p.session + 1 });
 
 /** Unsaved editor state kept in memory when the page unmounts while dirty. */
-let stash: EditorState | null = null;
+const stash = createUnsavedStash<EditorState>();
 
 /** Mirrors the top navigation hotkeys in App.tsx. */
 const NAV_HOTKEYS: { combo: string; page: Page }[] = [
@@ -77,19 +81,6 @@ const NAV_HOTKEYS: { combo: string; page: Page }[] = [
   { combo: 'alt+shift+3', page: 'import' },
   { combo: 'alt+shift+4', page: 'settings' },
 ];
-
-function factsSig(m: Macro): string {
-  return JSON.stringify(m.facts.map((f) => [f.id, f.key, f.statement, f.value, f.sourceUrl, f.evidenceQuote, f.status]));
-}
-
-/** Prefer whichever copy of the same macro is newer (guards against out-of-order store updates). */
-function freshest(stored: Macro | undefined, loaded: Macro | null): Macro | null {
-  if (!stored) return loaded;
-  if (!loaded || loaded.id !== stored.id) return stored;
-  if (loaded.version > stored.version) return loaded;
-  if (loaded.version === stored.version && Date.parse(loaded.updatedAt) > Date.parse(stored.updatedAt)) return loaded;
-  return stored;
-}
 
 export function focusField(field: DraftField, factUid?: string): void {
   requestAnimationFrame(() => {
@@ -119,7 +110,7 @@ export function useLibraryController() {
   const macro = useMemo(() => {
     if (selection.mode !== 'edit') return null;
     const stored = storeMacros.find((m) => m.id === selection.id) ?? archived.find((m) => m.id === selection.id);
-    return freshest(stored, ed.loadedFrom?.id === selection.id ? ed.loadedFrom : null);
+    return newerMacro(stored, ed.loadedFrom?.id === selection.id ? ed.loadedFrom : null);
   }, [selection, storeMacros, archived, ed.loadedFrom]);
 
   const listMacros = useMemo(() => {
@@ -147,6 +138,14 @@ export function useLibraryController() {
   const pendingRef = useRef(pending);
   pendingRef.current = pending;
   const savingRef = useRef(false);
+  /**
+   * The newest copy of macro `id` right now. Guarded actions run after "Save and continue", before React
+   * re-rendered: the store already holds the saved macro while macroRef still points at the old snapshot.
+   */
+  const latestMacro = useCallback(
+    (id: Id) => latestKnownMacro(id, [getState().macros, archivedRef.current], macroRef.current),
+    [],
+  );
   const bypassNav = useRef(false);
   const initialized = useRef(false);
 
@@ -380,9 +379,11 @@ export function useLibraryController() {
   }, []);
 
   const archive = useCallback(() => {
-    const m = macroRef.current;
-    if (!m || m.archivedAt) return;
+    const id = macroRef.current?.archivedAt ? null : macroRef.current?.id;
+    if (!id) return;
     guard(() => {
+      const m = latestMacro(id);
+      if (!m || m.archivedAt) return;
       void (async () => {
         setBusy('archive');
         try {
@@ -392,7 +393,7 @@ export function useLibraryController() {
           actions.removeMacro(m.id);
           if (showArchivedRef.current) loadMacro(archivedMacro);
           else setEd(cleared);
-          toast(showArchivedRef.current ? 'Macro archived' : 'Macro archived. Tick “Archived” in the list to see or restore it.', 'success');
+          toast(showArchivedRef.current ? 'Macro archived' : 'Macro archived. Turn on “Show archived” in the list to see or restore it.', 'success');
         } catch (err) {
           toast(errorMessage(err), 'danger');
         } finally {
@@ -400,7 +401,7 @@ export function useLibraryController() {
         }
       })();
     });
-  }, [guard, loadMacro]);
+  }, [guard, latestMacro, loadMacro]);
 
   const restore = useCallback(async () => {
     const m = macroRef.current;
@@ -440,9 +441,11 @@ export function useLibraryController() {
 
   const revert = useCallback(
     (version: number) => {
-      const m = macroRef.current;
-      if (!m || m.archivedAt) return;
+      const id = macroRef.current?.archivedAt ? null : macroRef.current?.id;
+      if (!id) return;
       guard(() => {
+        const m = latestMacro(id);
+        if (!m || m.archivedAt) return;
         void (async () => {
           setBusy('revert');
           try {
@@ -461,7 +464,7 @@ export function useLibraryController() {
         })();
       });
     },
-    [guard, loadMacro],
+    [guard, latestMacro, loadMacro],
   );
 
   const sendToAssist = useCallback(() => {
@@ -478,11 +481,10 @@ export function useLibraryController() {
   useEffect(() => {
     if (initialized.current) {
       // StrictMode re-mount: our state survived, drop the stash written by the simulated unmount.
-      stash = null;
+      stash.keep(null);
     } else {
       initialized.current = true;
-      const restored = stash;
-      stash = null;
+      const restored = stash.take();
       const seed = parseSeed(takeSessionJson(NEW_MACRO_DRAFT_KEY));
       const focusId = getState().libraryFocusId;
       if (focusId) setState({ libraryFocusId: null });
@@ -499,7 +501,7 @@ export function useLibraryController() {
     }
     return () => {
       const e = edRef.current;
-      stash = dirtyRef.current && e.draft ? e : null;
+      stash.keep(dirtyRef.current && e.draft ? e : null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -523,7 +525,7 @@ export function useLibraryController() {
       loadMacro(m);
       return;
     }
-    const contentChanged = prev.version !== m.version || factsSig(prev) !== factsSig(m);
+    const contentChanged = prev.version !== m.version || factsSignature(prev) !== factsSignature(m);
     if (!contentChanged) setEd((p) => (p.loadedFrom === prev ? { ...p, loadedFrom: m } : p));
     else if (!dirtyRef.current) loadMacro(m);
     else setEd((p) => (p.stale ? p : { ...p, stale: true }));

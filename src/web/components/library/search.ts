@@ -35,6 +35,12 @@ export function hasActiveFilters(f: MacroFilters): boolean {
   return f.query.trim() !== '' || f.category !== 'all' || f.favorites || f.attention;
 }
 
+/** Footer count, e.g. "12 macros" or "1 of 4 macros" when filters / archived rows narrow or widen the list. */
+export function countLabel(shown: number, total: number, partial: boolean): string {
+  const noun = (n: number) => (n === 1 ? 'macro' : 'macros');
+  return partial ? `${shown} of ${total} ${noun(total)}` : `${shown} ${noun(shown)}`;
+}
+
 export function needsAttention(m: Macro): boolean {
   return m.verification === 'outdated' || m.verification === 'conflict' || m.verification === 'unverified';
 }

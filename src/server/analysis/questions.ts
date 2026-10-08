@@ -77,7 +77,6 @@ interface Span {
 }
 
 interface Segment extends Span {
-  text: string;
   /** Top intent of the segment as scoreIntents reports it (may be the 'general' fallback). */
   top: IntentScore | undefined;
   /** Intent with real evidence (never the 'general' fallback), or null. */
@@ -162,7 +161,6 @@ function toSegment(text: string, span: Span, newTopic: boolean): Segment {
   const hasTopic = top !== undefined && top.intent !== 'general' && top.score >= TOPIC_SCORE;
   return {
     ...span,
-    text,
     top,
     topic: hasTopic ? top.intent : null,
     topicScore: hasTopic ? top.score : 0,
@@ -178,48 +176,44 @@ function isIssueStatement(g: Group): boolean {
   return PROBLEM_INTENTS.has(g.topic) || g.problem;
 }
 
+function groupOf(seg: Segment): Group {
+  const { start, end, top, topic, topicScore, question, problem } = seg;
+  return { start, end, top, topic, topicScore, question, problem };
+}
+
+/** Grow a group with the next segment (its text is then re-scored as a whole). */
+function extend(g: Group, seg: Segment): void {
+  g.end = seg.end;
+  g.top = undefined;
+  g.question ||= seg.question;
+  g.problem ||= seg.problem;
+  g.topicScore = Math.max(g.topicScore, seg.topicScore);
+}
+
 /** Attach topic-less clauses to their neighbours and merge consecutive clauses about the same intent. */
 function groupSegments(segments: Segment[]): Group[] {
   const groups: Group[] = [];
-  /** Topic-less clauses seen before the first topic; they become part of the next group. */
-  let prefix: (Span & { question: boolean; problem: boolean; top: IntentScore | undefined }) | undefined;
+  /** Topic-less clauses before the first topic; they become part of the next group. */
+  let prefix: Group | undefined;
   for (const seg of segments) {
     const last = groups.at(-1);
     if (last && !seg.newTopic && (seg.topic === null || seg.topic === last.topic)) {
-      last.end = seg.end;
-      last.top = undefined;
-      last.question ||= seg.question;
-      last.problem ||= seg.problem;
-      last.topicScore = Math.max(last.topicScore, seg.topicScore);
-      continue;
-    }
-    if (seg.topic === null && !seg.newTopic) {
-      if (prefix) {
-        prefix.end = seg.end;
-        prefix.question ||= seg.question;
-        prefix.problem ||= seg.problem;
-        prefix.top = undefined;
-      } else {
-        prefix = { start: seg.start, end: seg.end, question: seg.question, problem: seg.problem, top: seg.top };
-      }
-      continue;
-    }
-    if (prefix && seg.newTopic) {
-      groups.push({ ...prefix, topic: null, topicScore: 0 });
+      extend(last, seg);
+    } else if (seg.topic === null && !seg.newTopic) {
+      if (prefix) extend(prefix, seg);
+      else prefix = groupOf(seg);
+    } else if (prefix && !seg.newTopic) {
+      extend(prefix, seg);
+      prefix.topic = seg.topic;
+      groups.push(prefix);
       prefix = undefined;
+    } else {
+      if (prefix) groups.push(prefix);
+      prefix = undefined;
+      groups.push(groupOf(seg));
     }
-    groups.push({
-      start: prefix?.start ?? seg.start,
-      end: seg.end,
-      top: prefix ? undefined : seg.top,
-      topic: seg.topic,
-      topicScore: seg.topicScore,
-      question: seg.question || (prefix?.question ?? false),
-      problem: seg.problem || (prefix?.problem ?? false),
-    });
-    prefix = undefined;
   }
-  if (prefix) groups.push({ ...prefix, topic: null, topicScore: 0 });
+  if (prefix) groups.push(prefix);
   return groups;
 }
 

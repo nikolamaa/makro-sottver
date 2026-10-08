@@ -59,6 +59,7 @@ export class AssistService {
       recommendations: result.recommendations,
       noGoodMatch: result.noGoodMatch,
       uncoveredIntents: result.uncoveredIntents,
+      detectedVariables: variablesFromAnalysis(analysis),
       embeddings: this.index.embedder.status(),
       timingMs: { analysis: round(t1 - t0), search: round(t2 - t1), total: round(t2 - t0) },
     };

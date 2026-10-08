@@ -181,8 +181,9 @@
 
 /* Recommendations ---------------------------------------------------------- */
 .assist-recs {
-  /* Room for three cards so the reply editor does not jump when the result count changes. */
-  min-height: 330px;
+  /* Room for three typical cards (header + 3 x 114px + gaps) so the reply editor does not jump when the
+     skeletons are replaced or the result count changes. */
+  min-height: 395px;
 }
 .rec-list {
   list-style: none;
@@ -292,7 +293,8 @@
 .rec-skeleton {
   flex-direction: column;
   gap: 9px;
-  min-height: 96px;
+  /* Same height as a typical card (title, meta, one-line reason, matched terms). */
+  min-height: 114px;
   padding: 14px;
 }
 .is-stale {

@@ -1,8 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Category, Fact, Macro } from '../../../shared/types';
+import { DIFF_TIMEOUT_MS, visibleWhitespace, wordDiff } from './diffing';
 import {
   blankFact,
   draftFromMacro,
+  dropBlankFact,
+  latestKnownMacro,
   draftSignature,
   draftToInput,
   emptyDraft,
@@ -13,7 +16,8 @@ import {
   validateDraft,
   type MacroDraft,
 } from './model';
-import { EMPTY_FILTERS, buildHaystack, filterAndSort, type MacroFilters } from './search';
+import { EMPTY_FILTERS, buildHaystack, countLabel, filterAndSort, type MacroFilters } from './search';
+import { createUnsavedStash } from './stash';
 
 function fact(over: Partial<Fact> = {}): Fact {
   return {
@@ -180,5 +184,109 @@ describe('library search', () => {
     expect(run({}, 'mostUsed')).toEqual(['b', 'a', 'c']);
     expect(run({}, 'recentlyUsed')[0]).toBe('a');
     expect(run({}, 'recentlyUpdated')[0]).toBe('b');
+  });
+});
+
+describe('library review fixes', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('archive/revert after "Save and continue" use the just-saved macro, not the stale editor snapshot', () => {
+    // Bug: the guarded archive action captured the macro before the save; the archived copy (shown read-only and
+    // kept in the archived list) then had the pre-save content.
+    const stale = macro({ title: 'Before save', version: 2, updatedAt: '2026-10-08T10:00:00.000Z' });
+    const saved = macro({ title: 'After save', version: 3, updatedAt: '2026-10-08T10:05:00.000Z' });
+    expect(latestKnownMacro('m1', [[saved], []], stale)?.title).toBe('After save');
+    // Archived list is searched too; an unknown id falls back to the snapshot only when it is the same macro.
+    expect(latestKnownMacro('m1', [[], [saved]], null)?.title).toBe('After save');
+    expect(latestKnownMacro('m1', [[], []], stale)?.title).toBe('Before save');
+    expect(latestKnownMacro('other', [[saved], []], stale)).toBeNull();
+    // A fact-only save keeps the version number: on a tie the store copy (with the new facts) wins.
+    const factsSaved = macro({ version: 2, updatedAt: stale.updatedAt, facts: [] });
+    expect(latestKnownMacro('m1', [[factsSaved]], stale)?.facts).toEqual([]);
+    // A newer snapshot (store refreshed out of order) is kept.
+    expect(latestKnownMacro('m1', [[stale]], saved)?.title).toBe('After save');
+  });
+
+  it('word diff is bounded in time: very different long bodies fall back to old/new instead of freezing the UI', () => {
+    const words = (n: number, k: number) => Array.from({ length: n }, (_, i) => `w${(i * k) % 997}`).join(' ');
+    const a = words(3000, 7);
+    const b = words(3000, 13);
+    const t0 = performance.now();
+    const r = wordDiff(a, b);
+    const elapsed = performance.now() - t0;
+    expect(r.mode).toBe('whole');
+    expect(r.parts).toEqual([
+      { value: a, added: false, removed: true },
+      { value: b, added: true, removed: false },
+    ]);
+    // Unbounded diffWords takes ~2 s for this input; the bounded one stops shortly after DIFF_TIMEOUT_MS.
+    expect(elapsed).toBeLessThan(DIFF_TIMEOUT_MS + 1000);
+  });
+
+  it('word diff shows line-break-only changes (diffWords alone reports nothing changed)', () => {
+    const r = wordDiff('Hi there,\n\nYour withdrawal is pending.', 'Hi there,\nYour withdrawal is pending.');
+    expect(r.mode).toBe('whitespace');
+    expect(r.parts.some((p) => (p.added || p.removed) && p.value.includes('\n'))).toBe(true);
+    expect(visibleWhitespace(' \n\t')).toBe('·↵→');
+    expect(visibleWhitespace('\n', true)).toBe('↵\n');
+    // Regular word changes and identical texts.
+    const w = wordDiff('Processing takes 24 hours', 'Processing takes 48 hours');
+    expect(w.mode).toBe('words');
+    expect(w.parts.filter((p) => p.removed).map((p) => p.value.trim())).toEqual(['24']);
+    expect(w.parts.filter((p) => p.added).map((p) => p.value.trim())).toEqual(['48']);
+    expect(wordDiff('same', 'same')).toEqual({ parts: [{ value: 'same', added: false, removed: false }], mode: 'same' });
+    expect(wordDiff('', '').parts).toEqual([]);
+  });
+
+  it('a stashed unsaved draft keeps the browser reload/close prompt armed until it is restored', () => {
+    // Bug: leaving the Library through quick search / Back kept the draft in memory but removed beforeunload,
+    // so closing the tab afterwards lost the edits without a prompt.
+    const listeners = new Map<string, Set<(e: unknown) => void>>();
+    vi.stubGlobal('window', {
+      addEventListener: (type: string, fn: (e: unknown) => void) => {
+        if (!listeners.has(type)) listeners.set(type, new Set());
+        listeners.get(type)!.add(fn);
+      },
+      removeEventListener: (type: string, fn: (e: unknown) => void) => listeners.get(type)?.delete(fn),
+    });
+    const armed = () => listeners.get('beforeunload')?.size ?? 0;
+    const stash = createUnsavedStash<{ title: string }>();
+    expect(armed()).toBe(0);
+    stash.keep({ title: 'Draft' });
+    stash.keep({ title: 'Draft 2' });
+    expect(armed()).toBe(1);
+    expect(stash.has()).toBe(true);
+    const event = { preventDefault: vi.fn(), returnValue: 'x' };
+    for (const fn of listeners.get('beforeunload') ?? []) fn(event);
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(event.returnValue).toBe('');
+    expect(stash.take()).toEqual({ title: 'Draft 2' });
+    expect(armed()).toBe(0);
+    expect(stash.take()).toBeNull();
+    stash.keep({ title: 'Again' });
+    stash.keep(null);
+    expect(armed()).toBe(0);
+  });
+
+  it('leaving an untouched new fact (opening another one) drops it instead of leaving a "Statement missing" row', () => {
+    const existing = draftFromMacro(macro()).facts[0]!;
+    const fresh = blankFact();
+    const facts = [existing, fresh];
+    expect(dropBlankFact(facts, fresh.uid)).toEqual([existing]);
+    // Facts with content are kept, and the same array is returned when nothing is dropped.
+    expect(dropBlankFact(facts, existing.uid)).toBe(facts);
+    expect(dropBlankFact(facts, 'missing')).toBe(facts);
+    const typed = patchFact(fresh, { key: 'kyc.time' });
+    expect(dropBlankFact([existing, typed], typed.uid)).toHaveLength(2);
+  });
+
+  it('list footer pluralizes the total ("1 of 4 macros")', () => {
+    expect(countLabel(1, 4, true)).toBe('1 of 4 macros');
+    expect(countLabel(1, 1, true)).toBe('1 of 1 macro');
+    expect(countLabel(1, 1, false)).toBe('1 macro');
+    expect(countLabel(0, 0, false)).toBe('0 macros');
+    expect(countLabel(12, 12, false)).toBe('12 macros');
   });
 });

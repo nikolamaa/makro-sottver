@@ -2,11 +2,11 @@
  * Version history of a macro: list (vN, date, change source, note) + word diff of the selected version
  * against the current content, and "Revert to vN" (creates a new version with the old content).
  */
-import { diffWords } from 'diff';
 import { memo, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { INTENT_LABELS, type Category, type Macro, type MacroContent, type MacroVersion } from '../../../shared/types';
 import { api } from '../../api';
 import { Badge, Button, EmptyState, Spinner, toast } from '../../ui';
+import { visibleWhitespace, wordDiff } from './diffing';
 import { CHANGE_SOURCE_META, errorMessage, formatDateTime, relativeTime } from './model';
 
 export function VersionsPanel({
@@ -177,24 +177,34 @@ export function VersionsPanel({
   );
 }
 
+const isBlank = (s: string) => !/\S/.test(s);
+
 const DiffText = memo(function DiffText({ from, to, multiline }: { from: string; to: string; multiline?: boolean }) {
-  const parts = useMemo(() => diffWords(from, to), [from, to]);
+  const { parts, mode } = useMemo(() => wordDiff(from, to), [from, to]);
   return (
-    <div className={`lib-diff${multiline ? ' is-multiline' : ''}`}>
-      {parts.map((p, i) =>
-        p.added ? (
-          <ins key={i} className="lib-diff-add">
-            {p.value}
-          </ins>
-        ) : p.removed ? (
-          <del key={i} className="lib-diff-del">
-            {p.value}
-          </del>
-        ) : (
-          <span key={i}>{p.value}</span>
-        ),
-      )}
-    </div>
+    <>
+      <div className={`lib-diff${multiline ? ' is-multiline' : ''}`}>
+        {parts.map((p, i) => {
+          // Whitespace-only changes would be invisible: show them as ·, → and ↵.
+          const ws = mode === 'whitespace' && (p.added || p.removed) && isBlank(p.value);
+          return p.added ? (
+            <ins key={i} className={`lib-diff-add${ws ? ' is-space' : ''}`} title={ws ? 'Added spacing / line break' : undefined}>
+              {ws ? visibleWhitespace(p.value, true) : p.value}
+            </ins>
+          ) : p.removed ? (
+            <del key={i} className={`lib-diff-del${ws ? ' is-space' : ''}`} title={ws ? 'Removed spacing / line break' : undefined}>
+              {ws ? visibleWhitespace(p.value) : p.value}
+            </del>
+          ) : (
+            <span key={i}>{p.value}</span>
+          );
+        })}
+      </div>
+      {mode === 'whitespace' ? <p className="small muted lib-diff-note">Only spacing or line breaks changed.</p> : null}
+      {mode === 'whole' ? (
+        <p className="small muted lib-diff-note">Too many changes to compare word by word: the old text is shown struck through, then the current text.</p>
+      ) : null}
+    </>
   );
 });
 
