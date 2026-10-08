@@ -70,14 +70,15 @@ function bodyPassage(m: Macro): string {
 }
 
 /**
- * Concepts and products used by the relevance signals. Concepts come from the head and body passages plus the
- * names of template variables ({{bet_id}} -> "bet id"): a macro that asks for the bet ID is about bet IDs.
+ * Concepts and products used by the relevance signals. `concepts` is what the macro says: title, triggers, tags,
+ * body and the names of its template variables ({{bet_id}} -> "bet id": a macro that asks for the bet ID is about
+ * bet IDs), but not its intent labels, which are scored by the intent component already. `headConcepts` (what the
+ * macro is about, used for explanations) includes them.
  */
 function relevanceFeatures(m: Macro, head: string, body: string): Pick<IndexedMacro, 'concepts' | 'headConcepts' | 'products'> {
   const variables = listVariables(m.body).map((v) => v.replace(/_/g, ' '));
-  const headConcepts = new Set(matchConcepts(head).keys());
-  const concepts = new Set([...headConcepts, ...matchConcepts(`${body}\n${variables.join('\n')}`).keys()]);
-  return { concepts, headConcepts, products: macroProducts(m) };
+  const content = [m.title, ...m.triggers, ...m.tags, body, ...variables].join('\n');
+  return { concepts: new Set(matchConcepts(content).keys()), headConcepts: new Set(matchConcepts(head).keys()), products: macroProducts(m) };
 }
 
 function errorMessage(err: unknown): string {
