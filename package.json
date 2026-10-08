@@ -14,12 +14,14 @@
     "build": "npm run build:web && npm run build:server",
     "build:web": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
-    "start": "node --disable-warning=ExperimentalWarning dist/server/server/index.js",
+    "start": "node --disable-warning=ExperimentalWarning dist/node/server/index.js",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.web.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "node scripts/e2e.mjs",
-    "eval": "tsx scripts/eval-recommendations.ts"
+    "eval": "tsx scripts/eval-recommendations.ts",
+    "recover": "node --disable-warning=ExperimentalWarning dist/node/server/recover.js",
+    "setup": "npm install && npm run build"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.132.1",
