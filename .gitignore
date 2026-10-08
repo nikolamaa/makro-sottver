@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.macropilot-data/
+*.log
+.DS_Store
+coverage/
+test-results/
+playwright-report/
+.env
