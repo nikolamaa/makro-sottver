@@ -97,6 +97,13 @@
 .assist-var input {
   padding: 5px 8px;
 }
+/* Detected values and [ENTER ...] hints are shown as placeholders: keep them visibly distinct from input. */
+.assist-var input::placeholder,
+.assist-name input::placeholder {
+  color: var(--muted);
+  font-style: italic;
+  opacity: 0.85;
+}
 .assist-vars-empty {
   margin: 8px 0 0;
 }

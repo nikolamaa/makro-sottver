@@ -131,6 +131,11 @@
   margin: 0;
   accent-color: var(--accent);
 }
+.lib-spin-slot {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+}
 
 .lib-list {
   flex: 1;
@@ -319,7 +324,7 @@
 .lib-btn-danger-solid {
   background: var(--danger);
   border-color: var(--danger);
-  color: #fff;
+  color: var(--accent-contrast);
 }
 .lib-btn-danger-solid:hover:not(:disabled) {
   background: var(--danger);
@@ -531,23 +536,15 @@
   overflow-wrap: anywhere;
   line-height: 1.5;
 }
-.lib-preview mark,
-.lib-preview-legend mark {
-  color: inherit;
-}
-.lib-preview .placeholder-mark,
-.lib-preview-legend .placeholder-mark {
-  color: var(--warning);
-}
 .lib-var-filled {
   background: var(--info-soft);
-  color: var(--info) !important;
+  color: var(--info);
   border-radius: 3px;
   padding: 0 2px;
 }
 .lib-var-fallback {
   background: var(--accent-soft);
-  color: var(--accent) !important;
+  color: var(--accent);
   border-radius: 3px;
   padding: 0 2px;
   font-style: italic;
@@ -714,6 +711,10 @@
 }
 .lib-table tr.is-invalid td:first-child {
   box-shadow: inset 3px 0 0 var(--danger);
+}
+.lib-table td:first-child {
+  width: 18%;
+  max-width: 220px;
 }
 .lib-fact-key {
   font-family: var(--mono);
@@ -918,6 +919,10 @@
 .lib-changenote {
   flex: 1;
   min-width: 0;
+}
+.lib-save-btn {
+  min-width: 132px;
+  justify-content: center;
 }
 
 /* Empty states / modals --------------------------------------------------- */

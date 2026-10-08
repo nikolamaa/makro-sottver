@@ -13,7 +13,7 @@ import type { Id, PersonalizeRequest, RecommendResponse } from '../../../shared/
 import { api } from '../../api';
 import { comboLabel } from '../../hotkeys';
 import { actions as storeActions, getState, setState, useStore } from '../../store';
-import { copyToClipboard, toast } from '../../ui';
+import { toast } from '../../ui';
 import {
   assistReducer,
   buildNewMacroDraft,
@@ -23,7 +23,15 @@ import {
   type AssistAction,
   type AssistState,
 } from './assistState';
-import { COPY_CONFIRM_WINDOW_MS, decideCopy, isEditableTarget, MAX_MESSAGE_CHARS, readClipboardText, shouldAdoptClipboard } from './clipboard';
+import {
+  COPY_CONFIRM_WINDOW_MS,
+  copyText,
+  decideCopy,
+  isEditableTarget,
+  MAX_MESSAGE_CHARS,
+  readClipboardText,
+  shouldAdoptClipboard,
+} from './clipboard';
 import { plural } from './format';
 import { useDebouncedValue } from './hooks';
 import { errorText, isAbortError, recordCopy, sendEvent } from './requests';
@@ -31,14 +39,12 @@ import { MAX_COMBINE, selectOnly, stepSelection, toggleCombine } from './selecti
 import { selectNextPlaceholder } from './textSelection';
 import { requestVariables } from './variables';
 
-export const RECOMMEND_DEBOUNCE_MS = 120;
+const RECOMMEND_DEBOUNCE_MS = 120;
 const VARIABLES_DEBOUNCE_MS = 200;
 const NO_VARIABLES_KEY = '{}';
 
 /** Page snapshot kept while the agent visits other pages (in-memory only, never persisted). */
 let savedState: AssistState | null = null;
-/** Last reply copied to the clipboard; auto-read must not mistake it for a customer message. */
-let lastCopiedReply = '';
 
 function restoreState(): AssistState {
   return savedState ? { ...savedState, busy: { ai: false, draft: false } } : INITIAL_ASSIST_STATE;
@@ -188,11 +194,10 @@ export function createAssistActions(ctx: ActionContext) {
         return;
       }
       ctx.copyArmedUntil.current = 0;
-      if (!(await copyToClipboard(s.reply.text))) {
+      if (!(await copyText(s.reply.text))) {
         toast('Copy failed - select the text and copy it manually', 'danger');
         return;
       }
-      lastCopiedReply = s.reply.text;
       toast('Copied', 'success', 1500);
       const rank = recIdsOf(s.result).indexOf(s.selectedIds[0] ?? '');
       const confidence = s.result?.recommendations[rank]?.confidence;
@@ -282,13 +287,15 @@ function useRecommendation(state: AssistState, dispatch: Dispatch<AssistAction>,
   }, [message, resultFor, dispatch, stateRef]);
 }
 
-/** Fast personalization whenever the selection, message or (debounced) variables change. Returns "busy". */
+/** Fast personalization whenever the selection, a selected macro, the message or (debounced) variables change. */
 function usePersonalization(state: AssistState, dispatch: Dispatch<AssistAction>, actions: AssistActions): boolean {
   const variablesJson = useMemo(() => JSON.stringify(requestVariables(state.customerName, state.overrides)), [state.customerName, state.overrides]);
   // Debounce typing, but apply a reset (new conversation) immediately so a previous customer's values never leak.
   const variablesKey = useDebouncedValue(variablesJson, variablesJson === NO_VARIABLES_KEY ? 0 : VARIABLES_DEBOUNCE_MS);
   const { selectedIds, resultFor, reply } = state;
-  const key = personalizeKey(selectedIds, resultFor, variablesKey);
+  const macros = useStore((s) => s.macros);
+  const versions = useMemo(() => selectedIds.map((id) => macros.find((m) => m.id === id)?.version ?? 0).join(','), [selectedIds, macros]);
+  const key = personalizeKey(selectedIds, versions, resultFor, variablesKey);
   const busy = selectedIds.length > 0 && key !== reply.key && key !== reply.failedKey;
 
   useEffect(() => {
@@ -337,7 +344,8 @@ function useClipboardIntake(actions: AssistActions, stateRef: RefObject<AssistSt
     if (!autoRead) return;
     const onFocus = () => {
       void readClipboardText().then((clip) => {
-        if (clip !== null && shouldAdoptClipboard(clip, stateRef.current.message, lastCopiedReply)) actions.loadMessage(clip);
+        const { message, reply } = stateRef.current;
+        if (clip !== null && shouldAdoptClipboard(clip, { message, reply: reply.text })) actions.loadMessage(clip);
       });
     };
     window.addEventListener('focus', onFocus);

@@ -12,11 +12,15 @@ import { useHotkeys } from '../hotkeys';
 import { actions } from '../store';
 import { Badge, Button, EmptyState, Kbd, Modal, Spinner, toast } from '../ui';
 import { errorMessage } from '../components/settings/settingsUtils';
+import { addCommitResults, chunkForCommit, decodeFileBytes, formatFromFileName, guessFormat } from '../components/settings/importUtils';
 import './import.css';
 
 /** Server limit for one import request. */
 const MAX_CONTENT_CHARS = 2_000_000;
 const MAX_ERRORS_SHOWN = 50;
+/** The server caps request bodies at 3 MB; large imports are committed in batches well below that. */
+const COMMIT_BATCH_BYTES = 1_000_000;
+const COMMIT_BATCH_ITEMS = 500;
 
 type OnDuplicate = ImportCommitRequest['onDuplicate'];
 
@@ -73,26 +77,6 @@ const ON_DUPLICATE: { value: OnDuplicate; label: string; hint: string }[] = [
   { value: 'create_copy', label: 'Create a copy', hint: 'Import as a separate macro with the same title.' },
 ];
 
-function formatFromFileName(name: string): ImportFormat | null {
-  const ext = name.toLowerCase().split('.').pop() ?? '';
-  if (ext === 'csv') return 'csv';
-  if (ext === 'json') return 'json';
-  if (ext === 'txt' || ext === 'md' || ext === 'markdown') return 'text';
-  return null;
-}
-
-/** Cheap guess used only to suggest switching tabs. */
-function guessFormat(content: string): ImportFormat | null {
-  const t = content.trimStart();
-  if (!t) return null;
-  if (t.startsWith('[') || t.startsWith('{')) return 'json';
-  const first = (t.split(/\r?\n/, 1)[0] ?? '').toLowerCase();
-  const looksCsvHeader = /(^|[,;\t])\s*"?(title|name)"?\s*([,;\t]|$)/.test(first) && /[,;\t]\s*"?(body|text|content|message)"?\s*([,;\t]|$)/.test(first);
-  if (looksCsvHeader) return 'csv';
-  if (t.startsWith('#') || /^\s*-{3,}\s*$/m.test(t)) return 'text';
-  return null;
-}
-
 /** Page hotkeys must not fire underneath a dialog (e.g. the recovery key prompt). */
 function dialogOpen(): boolean {
   return document.querySelector('[role="dialog"]') !== null;
@@ -119,11 +103,14 @@ export function ImportPage() {
   const [previewing, setPreviewing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [onDuplicate, setOnDuplicate] = useState<OnDuplicate>('skip');
-  const [result, setResult] = useState<ImportCommitResult | null>(null);
+  const [result, setResult] = useState<{ counts: ImportCommitResult; partial: boolean } | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewAbort = useRef<AbortController | null>(null);
   const previewRef = useRef<HTMLElement>(null);
+  /** Synchronous guard: blocks a second commit (double click / key repeat) and previews while importing. */
+  const importingRef = useRef(false);
 
   useEffect(() => () => previewAbort.current?.abort(), []);
 
@@ -134,6 +121,7 @@ export function ImportPage() {
   }, [content, format]);
 
   const runPreview = useCallback(async (fmt: ImportFormat, text: string) => {
+    if (importingRef.current) return;
     if (!text.trim()) {
       toast('Paste or load some macros first', 'warning');
       textareaRef.current?.focus();
@@ -168,9 +156,13 @@ export function ImportPage() {
 
   const loadFile = useCallback(
     async (file: File) => {
+      if (importingRef.current) {
+        toast('Wait for the current import to finish', 'warning');
+        return;
+      }
       const fmt = formatFromFileName(file.name);
       if (!fmt) {
-        toast('Unsupported file type. Use .csv, .json, .txt or .md', 'danger');
+        toast('Unsupported file type. Use .csv, .tsv, .json, .txt or .md', 'danger');
         return;
       }
       if (file.size > MAX_CONTENT_CHARS * 4) {
@@ -178,7 +170,7 @@ export function ImportPage() {
         return;
       }
       try {
-        const text = (await file.text()).replace(/^﻿/, '');
+        const text = decodeFileBytes(new Uint8Array(await file.arrayBuffer()));
         setFormat(fmt);
         setContent(text);
         setFileName(file.name);
@@ -197,11 +189,28 @@ export function ImportPage() {
     if (file) void loadFile(file);
   };
 
-  const onDrop = (e: DragEvent<HTMLDivElement>) => {
+  const isFileDrag = (e: DragEvent<HTMLDivElement>) => Array.from(e.dataTransfer.types).includes('Files');
+
+  const onDragOver = (e: DragEvent<HTMLDivElement>) => {
+    // Only take over file drags; dragging selected text into the textarea keeps the browser default.
+    if (!isFileDrag(e)) return;
     e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    if (!dragging) setDragging(true);
+  };
+
+  const onDragLeave = (e: DragEvent<HTMLDivElement>) => {
+    // dragleave also fires when moving onto a child element; only reset when the pointer left the drop zone.
+    if (e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget)) return;
+    setDragging(false);
+  };
+
+  const onDrop = (e: DragEvent<HTMLDivElement>) => {
     setDragging(false);
     const file = e.dataTransfer.files?.[0];
-    if (file) void loadFile(file);
+    if (!file) return; // plain text drop: let the textarea insert it
+    e.preventDefault();
+    void loadFile(file);
   };
 
   const selectedCount = useMemo(() => (preview ? preview.included.filter(Boolean).length : 0), [preview]);
@@ -212,29 +221,60 @@ export function ImportPage() {
   );
 
   const commit = useCallback(async () => {
-    if (!preview || importing) return;
+    if (!preview || importingRef.current) return;
     const items = preview.items.filter((_, i) => preview.included[i]);
     if (!items.length) {
       toast('Select at least one macro to import', 'warning');
       return;
     }
+    // A preview still running for the same text would otherwise come back after the import and re-show it.
+    previewAbort.current?.abort();
+    importingRef.current = true;
     setImporting(true);
+    const batches = chunkForCommit(items, COMMIT_BATCH_BYTES, COMMIT_BATCH_ITEMS);
+    let total: ImportCommitResult = { created: 0, updated: 0, skipped: 0 };
+    let done = 0;
     try {
-      const res = await api('POST /api/import/commit', { body: { items, onDuplicate } });
-      toast(`Imported: ${res.created} created, ${res.updated} updated, ${res.skipped} skipped`, 'success', 4500);
-      setResult(res);
+      for (const batch of batches) {
+        if (batches.length > 1) setProgress({ done, total: items.length });
+        const res = await api('POST /api/import/commit', { body: { items: batch, onDuplicate } });
+        total = addCommitResults(total, res);
+        done += batch.length;
+      }
+      toast(`Imported: ${total.created} created, ${total.updated} updated, ${total.skipped} skipped`, 'success', 4500);
+      setResult({ counts: total, partial: false });
       setPreview(null);
       setContent('');
       setFileName(null);
+    } catch (err) {
+      if (done === 0) {
+        toast(errorMessage(err), 'danger');
+      } else {
+        // Earlier batches are saved: drop them from the preview so importing again continues where it stopped.
+        const committed = new Set(items.slice(0, done));
+        setPreview((p) => {
+          if (!p) return p;
+          const keep = p.items.map((it) => !committed.has(it));
+          return { ...p, items: p.items.filter((_, i) => keep[i]), included: p.included.filter((_, i) => keep[i]) };
+        });
+        setResult({ counts: total, partial: true });
+        toast(
+          `Import stopped after ${done} of ${items.length} macros: ${errorMessage(err)}. The rest are still listed - import again to continue.`,
+          'danger',
+          8000,
+        );
+      }
+    } finally {
+      importingRef.current = false;
+      setImporting(false);
+      setProgress(null);
+    }
+    if (done > 0) {
       await Promise.all([actions.refreshMacros(), actions.refreshCategories()]).catch((err: unknown) =>
         toast(`Imported, but the library could not be refreshed: ${errorMessage(err)}`, 'danger'),
       );
-    } catch (err) {
-      toast(errorMessage(err), 'danger');
-    } finally {
-      setImporting(false);
     }
-  }, [preview, importing, onDuplicate]);
+  }, [preview, onDuplicate]);
 
   const toggleItem = useCallback((index: number) => {
     setPreview((p) => (p ? { ...p, included: p.included.map((v, i) => (i === index ? !v : v)) } : p));
@@ -280,7 +320,7 @@ export function ImportPage() {
         </p>
       </header>
 
-      {result ? <ImportResult result={result} onDismiss={() => setResult(null)} /> : null}
+      {result ? <ImportResult result={result.counts} partial={result.partial} onDismiss={() => setResult(null)} /> : null}
 
       <div className="imp-grid">
         <section className="panel imp-input" aria-labelledby="imp-input-title">
@@ -311,11 +351,8 @@ export function ImportPage() {
           <div id="imp-tabpanel" role="tabpanel" aria-labelledby={`imp-tab-${format}`} className="imp-tabpanel">
             <div
               className={`imp-drop ${dragging ? 'is-dragging' : ''}`}
-              onDragOver={(e) => {
-                e.preventDefault();
-                if (!dragging) setDragging(true);
-              }}
-              onDragLeave={() => setDragging(false)}
+              onDragOver={onDragOver}
+              onDragLeave={onDragLeave}
               onDrop={onDrop}
             >
               <textarea
@@ -344,7 +381,8 @@ export function ImportPage() {
                   Loaded <strong>{fileName}</strong>
                 </span>
               ) : (
-                <span className="muted small">
+                // aria-hidden: the counter changes on every keystroke and must not be announced by the live region.
+                <span className="muted small" aria-hidden={content ? true : undefined}>
                   {content ? `${content.length.toLocaleString('en-US')} characters` : 'You can also drop a file here.'}
                 </span>
               )}
@@ -354,7 +392,7 @@ export function ImportPage() {
               <input
                 ref={fileInput}
                 type="file"
-                accept=".csv,.json,.txt,.md,text/csv,application/json,text/plain,text/markdown"
+                accept=".csv,.tsv,.json,.txt,.md,text/csv,text/tab-separated-values,application/json,text/plain,text/markdown"
                 onChange={onFileChange}
                 hidden
               />
@@ -379,7 +417,7 @@ export function ImportPage() {
                 </Button>
               )}
               <span className="spacer" />
-              <Button variant="primary" onClick={() => void runPreview(format, content)} disabled={previewing || !content.trim()} hotkey="mod+enter">
+              <Button variant="primary" onClick={() => void runPreview(format, content)} disabled={previewing || importing || !content.trim()} hotkey="mod+enter">
                 {previewing ? <Spinner label="Reading macros" /> : null}
                 Preview
               </Button>
@@ -410,7 +448,7 @@ export function ImportPage() {
             {stale ? (
               <div className="imp-stale" role="status">
                 <span>The text changed since this preview.</span>
-                <Button size="sm" onClick={() => void runPreview(format, content)} disabled={previewing}>
+                <Button size="sm" onClick={() => void runPreview(format, content)} disabled={previewing || importing}>
                   Refresh preview
                 </Button>
               </div>
@@ -469,7 +507,9 @@ export function ImportPage() {
                     hotkey="mod+shift+enter"
                   >
                     {importing ? <Spinner label="Importing" /> : null}
-                    Import {plural(selectedCount, 'macro')}
+                    {importing && progress
+                      ? `Importing ${progress.done.toLocaleString('en-US')} / ${progress.total.toLocaleString('en-US')}...`
+                      : `Import ${plural(selectedCount, 'macro')}`}
                   </Button>
                 </div>
               </div>
@@ -620,25 +660,31 @@ const PreviewRow = memo(function PreviewRow({
 }) {
   const extraTags = item.tags.length - MAX_CHIPS;
   const extraIntents = item.intents.length - MAX_CHIPS;
+  // Bodies are rendered only when expanded: a big import can list thousands of rows.
+  const [open, setOpen] = useState(false);
   return (
     <tr className={checked ? '' : 'is-excluded'}>
       <td className="imp-col-check">
         <input type="checkbox" checked={checked} onChange={() => onToggle(index)} aria-label={`Include "${item.title}"`} />
       </td>
       <td className="imp-col-title">
-        <details>
+        <details onToggle={(e) => setOpen(e.currentTarget.open)}>
           <summary>
             <span className="imp-title">{item.title}</span>
             {item.shortcut ? <span className="imp-shortcut mono">/{item.shortcut}</span> : null}
           </summary>
-          <pre className="imp-body">{item.body}</pre>
-          {item.triggers.length ? (
-            <p className="small muted">
-              Triggers: {item.triggers.slice(0, 5).join(' · ')}
-              {item.triggers.length > 5 ? ` +${item.triggers.length - 5}` : ''}
-            </p>
+          {open ? (
+            <>
+              <pre className="imp-body">{item.body}</pre>
+              {item.triggers.length ? (
+                <p className="small muted">
+                  Triggers: {item.triggers.slice(0, 5).join(' · ')}
+                  {item.triggers.length > 5 ? ` +${item.triggers.length - 5}` : ''}
+                </p>
+              ) : null}
+              {item.notes ? <p className="small muted">Notes: {item.notes}</p> : null}
+            </>
           ) : null}
-          {item.notes ? <p className="small muted">Notes: {item.notes}</p> : null}
         </details>
       </td>
       <td>{item.category ? item.category : <span className="muted">-</span>}</td>
@@ -693,11 +739,11 @@ function ErrorList({ errors }: { errors: string[] }) {
   );
 }
 
-function ImportResult({ result, onDismiss }: { result: ImportCommitResult; onDismiss: () => void }) {
+function ImportResult({ result, partial, onDismiss }: { result: ImportCommitResult; partial: boolean; onDismiss: () => void }) {
   return (
     <div className="panel imp-result" role="status">
       <div>
-        <strong>Import complete.</strong>{' '}
+        <strong>{partial ? 'Import stopped part-way.' : 'Import complete.'}</strong>{' '}
         <span>
           {plural(result.created, 'macro')} created, {result.updated} updated, {result.skipped} skipped.
         </span>

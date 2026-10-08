@@ -18,6 +18,7 @@ import {
   isMultiTopic,
   lexicalScore,
   matchIntents,
+  RELATED_INTENTS,
   usageScore,
   wantedIntents,
   type IntentMatch,
@@ -55,6 +56,7 @@ export const CANDIDATES_PER_SOURCE = 40;
 /** A secondary-question macro is only promoted to #2 when it is at least this confident. */
 export const MIN_DIVERSIFY_CONFIDENCE = 35;
 const MAX_MATCHED_TERMS = 6;
+const DEFAULT_MAX_RESULTS = 3;
 /** Concepts too generic to explain a match ("when", "account"). */
 const UNEXPLAINING_CONCEPTS: ReadonlySet<string> = new Set(['time', 'account']);
 
@@ -86,7 +88,10 @@ function round3(x: number): number {
   return Math.round(x * 1000) / 1000;
 }
 
-/** Score every candidate; candidates without any signal (no text, meaning or intent match) are dropped. */
+/**
+ * Candidates = top-40 lexical hits + top-40 semantic hits + every macro whose intents match the analysis (so the
+ * best macro for a secondary question is always considered). Candidates without any signal are dropped.
+ */
 function scoreCandidates(input: RankInput, weights: ReadonlyMap<Intent, number>): Scored[] {
   const { entries, provider, queryVector, lexicalHits } = input;
   const candidates = new Set<Id>(lexicalHits.slice(0, CANDIDATES_PER_SOURCE).map((h) => h.id));
@@ -165,15 +170,8 @@ function matchedTermsOf(item: IndexedMacro, hit: LexicalHit | undefined, query: 
     if (out.size < MAX_MATCHED_TERMS) out.add(displayTerm(word));
   };
   for (const term of query.terms) {
-    if (query.expansions.has(term)) continue;
-    // Show the corrected spelling of a typo that matched ("withdrawl" -> "withdrawal").
-    const correction = query.corrections.get(term);
-    if (correction && (lexical.has(term) || lexical.has(correction))) {
-      add(query.display.get(correction) ?? correction);
-      continue;
-    }
     const word = query.display.get(term) ?? term;
-    if (lexical.has(term) || conceptWords.has(word)) add(word);
+    if (!query.expansions.has(term) && (lexical.has(term) || conceptWords.has(word))) add(word);
   }
   for (const word of conceptWords) add(word);
   for (const term of query.terms) if (query.expansions.has(term) && lexical.has(term)) add(query.display.get(term) ?? term);
@@ -216,7 +214,7 @@ export function rankMacros(input: RankInput): RankResult {
   const { analysis } = input;
   const weights = intentWeights(analysis);
   const wanted = wantedIntents(analysis, weights);
-  const maxResults = Math.max(1, Math.floor(input.maxResults));
+  const maxResults = Number.isFinite(input.maxResults) ? Math.max(1, Math.floor(input.maxResults)) : DEFAULT_MAX_RESULTS;
   const picked = diversify(scoreCandidates(input, weights), analysis, wanted, maxResults);
 
   const asked = new Set<Intent>(analysis.intents.map((i) => i.intent));
@@ -224,10 +222,21 @@ export function rankMacros(input: RankInput): RankResult {
   const hits = new Map(input.lexicalHits.map((h) => [h.id, h]));
   const recommendations = picked.map((s) => toRecommendation(s, input, asked, hits.get(s.item.macro.id)));
 
-  const covered = new Set(picked.flatMap((s) => s.item.macro.intents));
   return {
     recommendations,
     noGoodMatch: (recommendations[0]?.confidence ?? 0) < input.minConfidence,
-    uncoveredIntents: wanted.filter((i) => !covered.has(i)),
+    uncoveredIntents: uncoveredIntents(picked, wanted, analysis),
   };
+}
+
+/**
+ * Wanted intents no returned macro covers. An explicit question needs a macro with exactly that intent; an
+ * intent only scored by the analyzer (no question of its own) also counts as covered by a related intent,
+ * so "withdrawal help" is not reported when a pending-withdrawal macro is returned.
+ */
+function uncoveredIntents(picked: Scored[], wanted: Intent[], analysis: Analysis): Intent[] {
+  const covered = new Set(picked.flatMap((s) => s.item.macro.intents));
+  const related = new Set([...covered].flatMap((i) => [...(RELATED_INTENTS.get(i) ?? [])]));
+  const asked = new Set(analysis.questions.flatMap((q) => (q.intent ? [q.intent] : [])));
+  return wanted.filter((i) => !covered.has(i) && (asked.has(i) || !related.has(i)));
 }

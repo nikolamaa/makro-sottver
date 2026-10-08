@@ -36,7 +36,8 @@ export function MacroEditor({ ctl }: { ctl: LibraryController }) {
       </section>
     );
   }
-  return <EditorBody ctl={ctl} draft={ctl.draft} />;
+  // Keyed by session: opening another macro resets local UI state (open menus, fact being edited, scroll).
+  return <EditorBody key={ctl.session} ctl={ctl} draft={ctl.draft} />;
 }
 
 function EditorPlaceholder({ hasMacros, onNew }: { hasMacros: boolean; onNew: () => void }) {
@@ -123,6 +124,16 @@ function EditorBody({ ctl, draft }: { ctl: LibraryController; draft: MacroDraft 
     document.getElementById(`lib-tab-${next.id}`)?.focus();
   };
 
+  /** Esc anywhere in the editor jumps back to the macro list (menus/forms that use Esc stop it first). */
+  const onEditorKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+    if (e.key !== 'Escape' || e.defaultPrevented) return;
+    const target = document.getElementById('lib-listbox') ?? document.getElementById('lib-search');
+    if (target) {
+      e.preventDefault();
+      target.focus();
+    }
+  };
+
   const onChangeNoteKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -131,7 +142,7 @@ function EditorBody({ ctl, draft }: { ctl: LibraryController; draft: MacroDraft 
   };
 
   return (
-    <section className="lib-editor panel" aria-label={`Macro editor: ${displayTitle}`}>
+    <section className="lib-editor panel" aria-label={`Macro editor: ${displayTitle}`} onKeyDown={onEditorKeyDown}>
       <header className="lib-editor-head">
         <div className="lib-editor-heading">
           <h2 className="lib-editor-title" title={displayTitle}>
@@ -247,8 +258,8 @@ function EditorBody({ ctl, draft }: { ctl: LibraryController; draft: MacroDraft 
               <span>
                 This macro changed while you were editing (now v{macro.version}). Saving keeps your text and creates a new version.
               </span>
-              <Button size="sm" onClick={ctl.reloadStale}>
-                Load latest
+              <Button size="sm" onClick={ctl.reloadStale} title="Discard your unsaved edits and load the latest saved version">
+                Discard mine, load latest
               </Button>
             </div>
           ) : null}
@@ -379,6 +390,7 @@ function EditorBody({ ctl, draft }: { ctl: LibraryController; draft: MacroDraft 
         />
         <Button
           variant="primary"
+          className="lib-save-btn"
           hotkey="mod+s"
           onClick={() => void ctl.save()}
           disabled={ctl.saving || readOnly || (!isNew && !dirty)}

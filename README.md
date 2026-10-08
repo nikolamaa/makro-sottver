@@ -111,7 +111,7 @@ Promenljive koje MacroPilot sam popunjava iz poruke: `{{user}}`, `{{username}}`,
 |---|---|---|
 | **Off** (podrazumevano) | $0 | Preporuke + šablon + ton, odmah |
 | **Claude Haiku 5.5** | ≈ $0,0004 po odgovoru, oko $1–2 mesečno | Settings → AI → nalepi Anthropic API ključ. Postoji mesečni limit troška i pseudonimizacija ličnih podataka |
-| **Ollama** | $0 | Instaliraj [Ollama](https://ollama.com), pa `ollama pull qwen3:4b`. Sporije na računarima bez GPU-a |
+| **Ollama** | $0 | Instaliraj [Ollama](https://ollama.com), pa `ollama pull qwen2.5:3b`. Sporije na računarima bez GPU-a |
 
 Semantička pretraga radi i bez AI-ja. Podrazumevano se koristi ugrađeni vektorizator, a ako je dostupan, i lokalni
 neuralni model `bge-small-en-v1.5` (~35 MB, preuzima se jednom). Oba su besplatna.

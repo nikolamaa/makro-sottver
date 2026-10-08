@@ -30,9 +30,10 @@ export function fnv1a(text: string): number {
   return hash >>> 0;
 }
 
-const FIRST_LETTER_RE = /^([\s"'“‘(*_]*)(\p{Ll})/u;
+/** First lowercase letter of a word that has no capitals later on ("iOS", "eSports" are left alone). */
+const FIRST_LETTER_RE = /^([\s"'“‘(*_]*)(\p{Ll})(?![\p{L}\p{N}]*\p{Lu})/u;
 
-/** Upper-case the first letter (skipping leading quotes/brackets/whitespace). */
+/** Upper-case the first letter (skipping leading quotes/brackets/whitespace), unless the word is camel-cased. */
 export function capitalizeFirst(text: string): string {
   return text.replace(FIRST_LETTER_RE, (_m, lead: string, letter: string) => lead + letter.toUpperCase());
 }

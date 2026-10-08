@@ -207,7 +207,8 @@ export function TagsField({
           <span key={t.toLowerCase()} className="lib-tag">
             {t}
             {disabled ? null : (
-              <button type="button" className="lib-tag-x" aria-label={`Remove tag ${t}`} onClick={() => remove(t)}>
+              // Not a tab stop: keyboard users edit the comma separated text directly.
+              <button type="button" tabIndex={-1} className="lib-tag-x" aria-label={`Remove tag ${t}`} onClick={() => remove(t)}>
                 ×
               </button>
             )}

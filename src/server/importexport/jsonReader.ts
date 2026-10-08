@@ -32,8 +32,9 @@ export function readJson(text: string, log: ProblemLog): SourceRead {
   }
 
   const native = data.format === EXPORT_FORMAT;
-  if (native && data.version !== undefined && data.version !== EXPORT_VERSION) {
-    log.add(`Unsupported export version ${String(data.version)}; this app reads version ${EXPORT_VERSION}.`);
+  // A hand-edited "version": "1" is the same version; anything else gets a message that shows the value as written.
+  if (native && data.version !== undefined && String(data.version) !== String(EXPORT_VERSION)) {
+    log.add(`Unsupported export version ${JSON.stringify(data.version)}; this app reads version ${EXPORT_VERSION}.`);
     return empty();
   }
   if (!('macros' in data)) {

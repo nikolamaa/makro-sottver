@@ -12,13 +12,16 @@ export function phraseSource(phrase: string): string {
   return escapeRegExp(phrase).replace(/ /g, '\\s+').replace(/'/g, "['’]");
 }
 
+const WHITESPACE_G_RE = /\s+/g;
+
+/** Collapse whitespace runs to single spaces (no trimming). */
+export function collapseWhitespace(s: string): string {
+  return s.replace(WHITESPACE_G_RE, ' ');
+}
+
 /** Round to two decimals (scores shown in the UI). */
 export function round2(x: number): number {
   return Math.round(x * 100) / 100;
-}
-
-export function clamp(x: number, min: number, max: number): number {
-  return x < min ? min : x > max ? max : x;
 }
 
 /** Common English function words and chat filler. Lowercase, apostrophes normalized to '. */

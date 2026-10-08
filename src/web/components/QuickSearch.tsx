@@ -8,7 +8,8 @@ import { renderTemplate } from '../../shared/template';
 import type { Macro } from '../../shared/types';
 import { matchCombo, useHotkeys } from '../hotkeys';
 import { actions, useStore } from '../store';
-import { copyToClipboard, Kbd, toast } from '../ui';
+import { Kbd, toast } from '../ui';
+import { copyText } from './assist/clipboard';
 import { plural, verificationBadge } from './assist/format';
 import { highlightSegments, quickSearchIndexFor, searchMacros, type QuickSearchHit } from './assist/quickSearch';
 import { recordCopy } from './assist/requests';
@@ -22,7 +23,7 @@ const SKELETON_ROWS = [0, 1, 2, 3, 4];
 /** Copy a macro's text as-is (missing variables become [ENTER ...] placeholders) and record the use. */
 async function copyMacro(macro: Macro): Promise<void> {
   const rendered = renderTemplate(macro.body, {});
-  if (!(await copyToClipboard(rendered.text))) {
+  if (!(await copyText(rendered.text))) {
     toast('Copy failed', 'danger');
     return;
   }

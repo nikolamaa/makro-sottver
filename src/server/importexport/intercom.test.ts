@@ -35,6 +35,20 @@ describe('convertIntercomVariables', () => {
     expect(convertIntercomVariables('{{first_name|my friend}}')).toBe('{{user|my friend}}');
   });
 
+  it('trims edge underscores and keeps inner ones', () => {
+    expect(convertIntercomVariables('{{__Plan  Type__ | fallback: "basic"}}')).toBe('{{plan_type|basic}}');
+    expect(convertIntercomVariables('{{ tx__hash (copy) }}')).toBe('{{tx__hash_copy}}');
+  });
+
+  it('converts attribute names with very long underscore runs in linear time', () => {
+    // A /_+$/ trim backtracks quadratically here (about 17 s for this input before the fix).
+    const body = `{{a ${'_'.repeat(200_000)} b}}`;
+    const started = performance.now();
+    const converted = convertIntercomVariables(body);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(converted).toBe(`{{a_${'_'.repeat(200_000)}_b}}`);
+  });
+
   it('leaves text without attributes and empty braces alone', () => {
     const text = 'Use code {{ }} or {single} braces; {{!!!}} stays.';
     expect(convertIntercomVariables(text)).toBe(text);

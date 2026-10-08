@@ -90,10 +90,13 @@ export const MacroSidebar = memo(function MacroSidebar({
     }
   }, [activeId]);
 
+  // Without an explicit cursor: the best match while searching, else the open macro, else the first row.
   const cursorIndex = useMemo(() => {
     const i = cursorId ? items.findIndex((m) => m.id === cursorId) : -1;
-    return i >= 0 ? i : items.length ? 0 : -1;
-  }, [items, cursorId]);
+    if (i >= 0) return i;
+    const open = !query && activeId ? items.findIndex((m) => m.id === activeId) : -1;
+    return open >= 0 ? open : items.length ? 0 : -1;
+  }, [items, cursorId, activeId, query]);
   const cursorMacro = cursorIndex >= 0 ? items[cursorIndex] : undefined;
 
   useEffect(() => {
@@ -230,6 +233,7 @@ export const MacroSidebar = memo(function MacroSidebar({
           <SearchIcon />
           <input
             ref={searchRef}
+            id="lib-search"
             type="text"
             role="searchbox"
             value={filters.query}
@@ -293,8 +297,8 @@ export const MacroSidebar = memo(function MacroSidebar({
           </button>
           <label className="lib-check">
             <input type="checkbox" checked={showArchived} onChange={(e) => onShowArchivedChange(e.target.checked)} />
-            Archived
-            {archivedLoading ? <Spinner label="Loading archived macros" /> : null}
+            Show archived
+            <span className="lib-spin-slot">{archivedLoading ? <Spinner label="Loading archived macros" /> : null}</span>
           </label>
         </div>
       </div>

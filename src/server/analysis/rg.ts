@@ -4,6 +4,7 @@
 import { normalizeForMatch, RG_CRITICAL_PHRASES, RG_RISK_PHRASES } from '../domain/igaming.js';
 import { escapeRegExp } from './text.js';
 
+/** Result of responsible-gambling risk detection. */
 export interface RgRisk {
   risk: boolean;
   critical: boolean;
@@ -57,8 +58,12 @@ const MATCHERS: PhraseMatcher[] = [...new Set([...RG_RISK_PHRASES, ...RG_CRITICA
   }),
 );
 
+/** One combined test so the common no-risk case costs a single regex scan. */
+const ANY_PHRASE_RE = new RegExp(`(?:^|[^a-z0-9])(?:${MATCHERS.map((m) => escapeRegExp(m.phrase)).join('|')})(?=$|[^a-z0-9])`);
+
 /** Detect RG risk signals in already-normalized text. */
 export function detectRgRiskNorm(norm: string): RgRisk {
+  if (!ANY_PHRASE_RE.test(norm)) return { risk: false, critical: false, signals: [] };
   const signals: string[] = [];
   let critical = false;
   for (const m of MATCHERS) {

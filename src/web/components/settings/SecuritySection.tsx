@@ -116,7 +116,7 @@ export function SecuritySection() {
           <SettingRow label="Master key storage" hint={storage?.text}>
             <Badge tone={storage?.tone ?? 'neutral'}>{storage?.label ?? status.keyStorage}</Badge>
           </SettingRow>
-          <SettingRow label="Data folder" wide hint="Encrypted database and backups live here. Useless without the key.">
+          <SettingRow label="Data folder" wide hint="The encrypted database lives here. It cannot be read without the master key.">
             <div className="st-path">
               <code className="st-path-text" title={status.dataDir}>
                 {status.dataDir}

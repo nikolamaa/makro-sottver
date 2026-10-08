@@ -9,8 +9,17 @@ const GREETING_WORDS = String.raw`(?:hi|hello|hey|dear|good\s+(?:morning|afterno
 /** The first non-empty line starts with a greeting word (case-insensitive). */
 const GREETING_RE = new RegExp(`^\\s*${GREETING_WORDS}`, 'i');
 
-/** A short greeting followed by more content on the same line: "Hi John, your withdrawal is ...". */
-const INLINE_GREETING_RE = new RegExp(`^(${GREETING_WORDS}[^,!.?\\n]{0,40}[,!])[ \\t]+(\\S.*)$`, 'i');
+/** Title abbreviations whose dot does not end a greeting ("Dear Mr. Smith, ..."). */
+const TITLE_ABBREVIATION = String.raw`\b(?:mr|mrs|ms|dr)`;
+
+/**
+ * A greeting followed by more content on the same line, split at the first clause end: "Hi John, your withdrawal
+ * is ...", "Hi John. Your withdrawal ...", "Hello John and thanks for contacting us about X, it is ...".
+ */
+const INLINE_GREETING_RE = new RegExp(
+  String.raw`^(${GREETING_WORDS}(?:[^,!.?\n]|(?<=${TITLE_ABBREVIATION})\.)*(?:[,!?]|(?<!${TITLE_ABBREVIATION})\.))[ \t]+(\S.*)$`,
+  'i',
+);
 
 /** `{{user}}` without an inline fallback (an inline fallback chosen by the macro author wins over the setting). */
 const BARE_USER_VAR_RE = /\{\{\s*user\s*\}\}/gi;

@@ -108,7 +108,8 @@ function readSource(format: ImportFormat, text: string, log: ProblemLog): Source
 function contentSizeError(content: string): string | null {
   const bytes = Buffer.byteLength(content, 'utf8');
   if (bytes <= IMPORT_LIMITS.maxContentBytes) return null;
-  const mb = (bytes / BYTES_PER_MB).toFixed(1);
+  // Round up so content just over the limit never reads as "2.0 MB; the maximum is 2 MB".
+  const mb = (Math.ceil((bytes / BYTES_PER_MB) * 10) / 10).toFixed(1);
   return `The content is too large (${mb} MB); the maximum is ${IMPORT_LIMITS.maxContentBytes / BYTES_PER_MB} MB. Split it into smaller files.`;
 }
 

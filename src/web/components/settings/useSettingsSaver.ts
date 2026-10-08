@@ -8,16 +8,17 @@
  * collected into one partial patch that is sent with PUT /api/settings after 400 ms of inactivity. Requests are
  * serialized; changes made while a request is in flight are kept and sent afterwards. On failure the failed patch
  * is rolled back to the last settings confirmed by the server and the error is shown as a toast.
+ * The queue logic lives in settingsSaveQueue.ts (unit tested); this hook wires it to React, the store and the API.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AppSettings, DeepPartial } from '../../../shared/types';
+import type { AppSettings } from '../../../shared/types';
 import { api } from '../../api';
 import { actions, getState } from '../../store';
 import { toast } from '../../ui';
-import { deepMerge, errorMessage } from './settingsUtils';
+import { SettingsSaveQueue, type SaveState, type SettingsPatch } from './settingsSaveQueue';
+import { errorMessage } from './settingsUtils';
 
-export type SettingsPatch = DeepPartial<AppSettings>;
-export type SaveState = 'idle' | 'pending' | 'saving' | 'saved' | 'error';
+export type { SaveState, SettingsPatch } from './settingsSaveQueue';
 
 const DEBOUNCE_MS = 400;
 const SAVED_VISIBLE_MS = 2500;
@@ -28,17 +29,15 @@ export interface SettingsSaver {
   update: (patch: SettingsPatch) => void;
   /** Send pending changes now (e.g. Ctrl+S or when leaving the page). */
   flush: () => void;
+  /** Send pending changes now and resolve once they reached the server (or failed). */
+  whenIdle: () => Promise<void>;
   /** Settings returned by another endpoint (e.g. API key save); keeps unsaved local changes on top. */
   applyServerSettings: (settings: AppSettings) => void;
 }
 
 export function useSettingsSaver(): SettingsSaver {
   const [state, setSaveState] = useState<SaveState>('idle');
-  const pending = useRef<SettingsPatch | null>(null);
-  const confirmed = useRef<AppSettings | null>(getState().settings);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const inflight = useRef(false);
   const mounted = useRef(true);
 
   const setSafeState = useCallback((s: SaveState) => {
@@ -54,64 +53,24 @@ export function useSettingsSaver(): SettingsSaver {
       }, SAVED_VISIBLE_MS);
     }
   }, []);
+  const setStateRef = useRef(setSafeState);
+  setStateRef.current = setSafeState;
 
-  // `flush` and `schedule` reference each other; keep the latest flush in a ref.
-  const flushRef = useRef<() => Promise<void>>(async () => {});
-
-  const schedule = useCallback(() => {
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => {
-      timer.current = null;
-      void flushRef.current();
-    }, DEBOUNCE_MS);
-  }, []);
-
-  const flush = useCallback(async () => {
-    if (timer.current) {
-      clearTimeout(timer.current);
-      timer.current = null;
-    }
-    if (inflight.current || !pending.current) return;
-    const patch = pending.current;
-    pending.current = null;
-    inflight.current = true;
-    setSafeState('saving');
-    try {
-      const result = await api('PUT /api/settings', { body: patch });
-      confirmed.current = result;
-      actions.setSettings(pending.current ? deepMerge(result, pending.current) : result);
-      if (!pending.current) setSafeState('saved');
-      actions.refreshHealth().catch((err: unknown) => toast(errorMessage(err), 'danger'));
-    } catch (err) {
-      toast(`Settings not saved: ${errorMessage(err)}`, 'danger');
-      const base = confirmed.current ?? getState().settings;
-      if (base) actions.setSettings(pending.current ? deepMerge(base, pending.current) : base);
-      setSafeState('error');
-    } finally {
-      inflight.current = false;
-      // Changes made while the request was in flight: save them too.
-      if (pending.current && !timer.current) schedule();
-    }
-  }, [schedule, setSafeState]);
-  flushRef.current = flush;
-
-  const update = useCallback(
-    (patch: SettingsPatch) => {
-      const current = getState().settings;
-      if (!current) return;
-      if (!confirmed.current) confirmed.current = current;
-      pending.current = pending.current ? deepMerge(pending.current, patch) : patch;
-      actions.setSettings(deepMerge(current, patch));
-      setSafeState('pending');
-      schedule();
-    },
-    [schedule, setSafeState],
-  );
-
-  const applyServerSettings = useCallback((settings: AppSettings) => {
-    confirmed.current = settings;
-    actions.setSettings(pending.current ? deepMerge(settings, pending.current) : settings);
-  }, []);
+  const queueRef = useRef<SettingsSaveQueue | null>(null);
+  if (!queueRef.current) {
+    queueRef.current = new SettingsSaveQueue({
+      getSettings: () => getState().settings,
+      applyLocal: (s) => actions.setSettings(s),
+      send: (patch) => api('PUT /api/settings', { body: patch }),
+      onSaved: () => {
+        actions.refreshHealth().catch((err: unknown) => toast(errorMessage(err), 'danger'));
+      },
+      onError: (err) => toast(`Settings not saved: ${errorMessage(err)}`, 'danger'),
+      onState: (s) => setStateRef.current(s),
+      debounceMs: DEBOUNCE_MS,
+    });
+  }
+  const queue = queueRef.current;
 
   // Save whatever is pending when the page unmounts (navigating away must not lose a change).
   useEffect(() => {
@@ -119,11 +78,14 @@ export function useSettingsSaver(): SettingsSaver {
     return () => {
       mounted.current = false;
       if (savedTimer.current) clearTimeout(savedTimer.current);
-      if (pending.current) void flushRef.current();
+      queue.flush();
     };
-  }, []);
+  }, [queue]);
 
-  const flushNow = useCallback(() => void flush(), [flush]);
+  const update = useCallback((patch: SettingsPatch) => queue.update(patch), [queue]);
+  const flush = useCallback(() => queue.flush(), [queue]);
+  const whenIdle = useCallback(() => queue.whenIdle(), [queue]);
+  const applyServerSettings = useCallback((s: AppSettings) => queue.applyServerSettings(s), [queue]);
 
-  return { state, update, flush: flushNow, applyServerSettings };
+  return { state, update, flush, whenIdle, applyServerSettings };
 }

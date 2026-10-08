@@ -1,7 +1,7 @@
 /**
  * Small helpers shared by the Settings page, the Import page and the onboarding dialog.
  */
-import type { DeepPartial } from '../../../shared/types';
+import type { AppSettings, DeepPartial, EmbedderStatus } from '../../../shared/types';
 
 type PlainObject = Record<string, unknown>;
 
@@ -78,3 +78,23 @@ export const sessionFlag = {
     }
   },
 };
+
+/**
+ * After the matching engine was changed, the server switches in the background (the local neural model may first
+ * download ~35 MB) and keeps reporting the previous engine until the new one is ready. True once the reported
+ * status reflects the selected engine. For 'auto' the built-in engine is a valid outcome, so only the neural model
+ * counts as settled; callers stop waiting after a time limit instead.
+ */
+export function embeddingSwitchSettled(selected: AppSettings['embeddings'], status: EmbedderStatus | null): boolean {
+  if (!status || status.state === 'loading') return false;
+  switch (selected.provider) {
+    case 'builtin':
+      return status.provider === 'builtin';
+    case 'transformers':
+      return status.provider === 'transformers';
+    case 'ollama':
+      return status.provider === 'ollama' && status.model === selected.ollamaModel;
+    case 'auto':
+      return status.provider === 'transformers';
+  }
+}

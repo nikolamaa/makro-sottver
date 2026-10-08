@@ -260,6 +260,23 @@ function parseModelJson<S extends z.ZodType>(content: string, schema: S): SafePa
   return result.success ? { ok: true, data: result.data } : { ok: false };
 }
 
+const LOOPBACK_IPV4_RE = /^127(?:\.\d{1,3}){3}$/;
+const LOCAL_HOSTNAMES = new Set(['localhost', '[::1]', '0.0.0.0']);
+
+/**
+ * True when the URL points at this computer (loopback). Anything else (LAN or internet host) means requests leave
+ * the computer. An unparsable URL cannot send anything, so it counts as local.
+ */
+export function isLoopbackUrl(url: string): boolean {
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname.toLowerCase();
+  } catch {
+    return true;
+  }
+  return LOCAL_HOSTNAMES.has(hostname) || hostname.endsWith('.localhost') || LOOPBACK_IPV4_RE.test(hostname);
+}
+
 /** "llama3.2" and "llama3.2:latest" name the same model. */
 function normalizeOllamaModel(name: string): string {
   const lower = name.trim().toLowerCase();
@@ -300,6 +317,8 @@ async function ollamaJson<T>(doFetch: FetchLike, baseUrl: string, path: string, 
  * Ollama provider: POST {url}/api/chat with { model, stream: false, format: <JSON schema from z.toJSONSchema>,
  * messages: [{role:'system'},{role:'user'}], options: { temperature: 0.2 } }. Validate with schema.safeParse.
  * Usage from prompt_eval_count / eval_count; costUsd = 0. test() calls GET {url}/api/tags and checks the model exists.
+ * isCloud is false only for a loopback URL: an Ollama server on another machine receives the customer's text, so
+ * pseudonymization and strict local mode must treat it like a cloud provider.
  * `fetch` is a test seam (defaults to the global fetch at call time).
  */
 export function createOllamaProvider(opts: { url: string; model: string; fetch?: FetchLike }): LlmProvider {
@@ -309,7 +328,7 @@ export function createOllamaProvider(opts: { url: string; model: string; fetch?:
   return {
     id: 'ollama',
     model,
-    isCloud: false,
+    isCloud: !isLoopbackUrl(baseUrl),
 
     async generateJson<S extends z.ZodType>(req: JsonRequest<S>): Promise<LlmResult<z.infer<S>>> {
       const started = performance.now();

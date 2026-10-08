@@ -137,7 +137,7 @@ export function SettingsPage() {
         </nav>
 
         <div className="st-content">
-          <AiSection settings={settings} update={saver.update} applyServerSettings={saver.applyServerSettings} />
+          <AiSection settings={settings} update={saver.update} applyServerSettings={saver.applyServerSettings} whenSaved={saver.whenIdle} />
           <SearchSection settings={settings} update={saver.update} />
           <RepliesSection settings={settings} update={saver.update} />
           <RecommendationsSection settings={settings} update={saver.update} />

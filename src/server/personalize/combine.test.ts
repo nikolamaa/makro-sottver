@@ -102,6 +102,27 @@ describe('combineBodies', () => {
     expect(combineBodies([{ title: 'A', body: 'Hi {{user}},\n\nA.' }, { title: 'Greeting only', body: 'Hello {{user}},' }])).toBe('Hi {{user}},\n\nA.');
   });
 
+  it("keeps an earlier part's final request instead of dropping it as a closing", () => {
+    const text = combineBodies([
+      { title: 'Deposit missing', body: 'Hi {{user}},\n\nWe are checking your deposit.\nPlease let us know your TXID so we can trace it.' },
+      { title: 'Bonus', body: 'The weekly bonus is posted every Saturday.\n\nLet me know if you have any other questions!' },
+    ]);
+    expect(text).toBe(
+      'Hi {{user}},\n\nWe are checking your deposit.\nPlease let us know your TXID so we can trace it.\n\n' +
+        'Regarding your question about bonus:\nThe weekly bonus is posted every Saturday.\n\nLet me know if you have any other questions!',
+    );
+  });
+
+  it("strips only the greeting of a later part, never the content on the greeting's line", () => {
+    const first = { title: 'A', body: 'Hi {{user}},\n\nA body.' };
+    expect(
+      combineBodies([first, { title: 'Bonus', body: 'Hello {{user}} and thank you for contacting Stake about the bonus, it is sent every Saturday.' }]),
+    ).toBe('Hi {{user}},\n\nA body.\n\nRegarding your question about bonus:\nIt is sent every Saturday.');
+    expect(combineBodies([first, { title: 'WD', body: 'Hi {{user}}. Your withdrawal is pending review.\nMore info.' }])).toBe(
+      'Hi {{user}},\n\nA body.\n\nRegarding your question about WD:\nYour withdrawal is pending review.\nMore info.',
+    );
+  });
+
   it('uses a generic bridge for an empty title', () => {
     expect(combineBodies([{ title: 'A', body: 'A.' }, { title: ' [X] ', body: 'B.' }])).toBe('A.\n\nRegarding your other question:\nB.');
   });
@@ -142,6 +163,54 @@ describe('splitClosing', () => {
     const body = "If you feel you'd like to take a break from playing, just let me know and I'll walk you through the options.";
     expect(splitClosing(body)).toEqual({ body, closing: '' });
     expect(splitClosing('Thanks for your deposit, it was credited.')).toEqual({ body: 'Thanks for your deposit, it was credited.', closing: '' });
+  });
+
+  it.each([
+    'Please let us know your transaction hash so we can check it.',
+    'Let us know the network you used.',
+    'Let us know if the deposit is still missing after 1 hour.',
+    'Let us know which game you were playing.',
+    'If you need any documents, upload them under Settings > Verify.',
+    'If you need help with your deposit, open the Wallet.',
+    'If you have any issues logging in, clear your cache.',
+    'Should you need to change your email, go to Settings.',
+    'Feel free to use any supported network.',
+    "Don't hesitate to enable 2FA for extra security.",
+    'If you have any questions about wagering, see https://help.stake.com/en/articles/4929043.',
+    'Let us know if you need {{document_type}}.',
+  ])('keeps the request/content line %j (never a closing)', (line) => {
+    expect(splitClosing(`Answer.\n${line}`)).toEqual({ body: `Answer.\n${line}`, closing: '' });
+  });
+
+  it('never cuts a list step, even one that reads like a closing', () => {
+    for (const body of ['Steps:\n1. Open the wallet\n2. Copy the TXID\n3. Let us know the TXID.', 'Options:\n- Feel free to contact us.']) {
+      expect(splitClosing(body)).toEqual({ body, closing: '' });
+    }
+  });
+
+  it.each([
+    'Just let us know.',
+    'Let me know!',
+    "Let us know if there's anything else we can do.",
+    'Let me know if we can help with anything else!',
+    'Do let us know if you require any additional information.',
+    'If you need any further assistance, feel free to contact us.',
+    'If you need help, just ask.',
+    'In case you need anything else, just write to us.',
+    'Let me know how it goes.',
+    'Don’t hesitate to contact us.',
+    'If there’s anything else, let us know.',
+    'Let me know if you have any other questions, {{user}}!',
+  ])('recognizes the generic closing %j', (line) => {
+    expect(splitClosing(`Answer.\n${line}`)).toEqual({ body: 'Answer.', closing: line });
+  });
+
+  it('removes a sign-off followed by two name lines, and patience + understanding', () => {
+    expect(splitClosing('Answer.\n\nBest regards,\nAna\nStake Support')).toEqual({ body: 'Answer.', closing: 'Best regards,\nAna\nStake Support' });
+    expect(splitClosing('Answer.\nThanks for your patience and understanding.')).toEqual({
+      body: 'Answer.',
+      closing: 'Thanks for your patience and understanding.',
+    });
   });
 
   it("treats 'Thank you for your patience' as a closing only as the whole final line", () => {

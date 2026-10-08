@@ -1,7 +1,8 @@
 /**
  * High-level AI features with privacy + cost controls. Owns provider selection, budget enforcement,
- * pseudonymization, guardrails and graceful errors. Never throws for "AI not configured" from personalize():
- * callers check isReady() first; other failures throw AiError so the API can fall back to fast mode.
+ * pseudonymization, guardrails and graceful errors. personalize() and draft() throw AiError for every failure
+ * (not configured, strict local, budget, provider errors) so the API can show it and fall back to fast mode;
+ * rerank() never fails because of AI and returns the local candidates instead.
  */
 import type { z } from 'zod';
 import type {
@@ -41,8 +42,8 @@ export interface AiServiceDeps {
 }
 
 const CLOUD_TIMEOUT_MS = 30_000;
-/** Local models on a laptop CPU can need tens of seconds (plus model load on first use). */
-const LOCAL_TIMEOUT_MS = 120_000;
+/** Ollama models on a laptop CPU can need tens of seconds (plus model load on first use). */
+const OLLAMA_TIMEOUT_MS = 120_000;
 const SUMMARY_CHARS = 300;
 const TITLE_CHARS = 80;
 const MAX_SUGGESTED_INTENTS = 3;
@@ -50,13 +51,17 @@ const MAX_SUGGESTED_INTENTS = 3;
 const MIN_MASK_LENGTH = 2;
 
 const STRICT_LOCAL_MESSAGE = 'Strict local mode is on, so cloud AI is blocked. Use Ollama or turn off strict local mode in Settings.';
+const STRICT_LOCAL_REMOTE_OLLAMA_MESSAGE =
+  'Strict local mode is on, but the Ollama URL points to another computer. Use Ollama on this computer (http://127.0.0.1:11434) or turn off strict local mode in Settings.';
 const RG_WARNING = 'Responsible gambling signals detected: follow the internal RG procedure before replying.';
 const UNKNOWN_TOKEN_WARNING = 'The reply contains a ⟦...⟧ token the app could not restore. Replace it before sending.';
 
 const PERSONAL_STANDARD_VARIABLES = new Set(['user', 'username', 'email', 'tx_hash', 'bet_id']);
 const STANDARD_VARIABLE_SET = new Set<string>(STANDARD_VARIABLES);
-/** Custom (non-standard) variable names that probably hold personal data. */
-const PERSONAL_CUSTOM_VARIABLE_RE = /name|user|mail|phone|address|wallet|hash|iban|card|(?:^|_)id$/i;
+/** Custom (non-standard) variable names that probably hold personal data (e.g. txid, player_id, wallet, dob). */
+const PERSONAL_CUSTOM_VARIABLE_RE = /name|user|login|mail|phone|mobile|address|wallet|hash|iban|card|passport|birth|account|(?:^|_)(?:dob|ip|txn?)(?:_|$)|id$/i;
+const WORD_CHAR_RE = /[\p{L}\p{N}_]/u;
+const REGEX_SPECIAL_RE = /[.*+?^${}()|[\]\\]/g;
 const TOKEN_KIND_RE = /[^A-Z]+/g;
 const EDGE_UNDERSCORES_RE = /^_+|_+$/g;
 const LEFTOVER_TOKEN_RE = /⟦[^⟧\n]{1,40}⟧/;
@@ -137,7 +142,7 @@ export class AiService {
     });
     const { data, usage } = await this.run('personalize', provider, settings, spec);
 
-    const text = view.restore(data.reply).trim();
+    const text = fillLeftoverVariables(view.restore(data.reply), input.variables, p.userFallback).trim();
     const factIds = new Set(facts.map((f) => f.id));
     return {
       text,
@@ -213,14 +218,18 @@ export class AiService {
     return { provider: a.provider, settings: a.settings };
   }
 
-  /** Resolves the provider and the first reason it cannot be used (strict local, not configured, budget). */
+  /**
+   * Resolves the provider and the first reason it cannot be used (strict local, not configured, budget).
+   * Strict local blocks every provider whose requests leave the computer (Claude, or Ollama on another host);
+   * the budget applies only to paid providers.
+   */
   private availability(checkBudget: boolean): Availability {
     const settings = this.deps.getSettings();
     const provider = this.build(settings);
     const cloud = provider ? provider.isCloud : settings.ai.provider === 'anthropic';
-    if (settings.privacy.strictLocal && cloud) return { ok: false, settings, error: new AiError('strict_local', STRICT_LOCAL_MESSAGE) };
+    if (settings.privacy.strictLocal && cloud) return { ok: false, settings, error: strictLocalError(provider) };
     if (!provider) return { ok: false, settings, error: new AiError('not_configured', notConfiguredMessage(settings)) };
-    const budgetError = checkBudget && provider.isCloud ? this.budgetError(settings) : null;
+    const budgetError = checkBudget && isPaid(provider) ? this.budgetError(settings) : null;
     return budgetError ? { ok: false, settings, error: budgetError } : { ok: true, provider, settings };
   }
 
@@ -260,7 +269,7 @@ export class AiService {
         schema: spec.schema,
         maxTokens: OUTPUT_TOKEN_LIMITS[purpose],
         effort: settings.ai.effort,
-        timeoutMs: provider.isCloud ? CLOUD_TIMEOUT_MS : LOCAL_TIMEOUT_MS,
+        timeoutMs: isPaid(provider) ? CLOUD_TIMEOUT_MS : OLLAMA_TIMEOUT_MS,
       });
       this.deps.recordUsage(purpose, result.usage);
       return result;
@@ -287,9 +296,15 @@ function notConfiguredMessage(settings: AppSettings): string {
   return 'AI is off. Choose Claude or Ollama in Settings; fast mode works without AI.';
 }
 
+function strictLocalError(provider: LlmProvider | null): AiError {
+  return new AiError('strict_local', provider?.id === 'ollama' ? STRICT_LOCAL_REMOTE_OLLAMA_MESSAGE : STRICT_LOCAL_MESSAGE);
+}
+
 function describeProvider(provider: LlmProvider, settings: AppSettings): string {
-  if (provider.id === 'ollama') return `Ollama (${provider.model}), runs locally`;
-  return `Claude (${provider.model})${settings.ai.pseudonymize ? ', personal data pseudonymized' : ''}`;
+  const name = provider.id === 'ollama' ? `Ollama (${provider.model})` : `Claude (${provider.model})`;
+  if (!provider.isCloud) return `${name}, runs locally`;
+  const where = provider.id === 'ollama' ? ' on another computer' : '';
+  return `${name}${where}${settings.ai.pseudonymize ? ', personal data pseudonymized' : ''}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -302,6 +317,11 @@ function identity(text: string): string {
 
 function isPersonalVariable(name: string): boolean {
   return PERSONAL_STANDARD_VARIABLES.has(name) || (!STANDARD_VARIABLE_SET.has(name) && PERSONAL_CUSTOM_VARIABLE_RE.test(name));
+}
+
+/** Paid providers count against the monthly budget and get the shorter cloud timeout. */
+function isPaid(provider: LlmProvider): boolean {
+  return provider.id === 'anthropic';
 }
 
 /** Pseudonymizes only when text leaves the computer and the user asked for it. */
@@ -321,13 +341,10 @@ function pseudonymizedView(message: string, analysis: Analysis, variables: Recor
   const result = pseudonymize(message, analysis.entities, personal);
   const mapping = { ...result.mapping };
   const tokenByValue = new Map(Object.entries(mapping).map(([token, value]) => [value, token]));
+  const personalTokens = new Map(Object.entries(personal).map(([name, value]) => [name, tokenFor(name, value, mapping, tokenByValue)]));
+  const mask = valueMasker(tokenByValue);
   const maskedVariables: Record<string, string> = {};
-  for (const [name, value] of Object.entries(variables)) {
-    maskedVariables[name] = Object.hasOwn(personal, name) ? tokenFor(name, value, mapping, tokenByValue) : value;
-  }
-  // Longest first, so a full name is replaced before a part of it.
-  const replacements = [...tokenByValue].filter(([value]) => value.length >= MIN_MASK_LENGTH).sort((a, b) => b[0].length - a[0].length);
-  const mask = (text: string): string => replacements.reduce((acc, [value, token]) => acc.split(value).join(token), text);
+  for (const [name, value] of Object.entries(variables)) maskedVariables[name] = personalTokens.get(name) ?? mask(value);
   return {
     // Masking again catches personal variable values the entity-based pass did not cover.
     message: mask(result.text),
@@ -335,6 +352,21 @@ function pseudonymizedView(message: string, analysis: Analysis, variables: Recor
     mask,
     restore: (text) => restorePseudonyms(text, mapping),
   };
+}
+
+/** Regex source for a literal value; word-character ends get boundaries, so "Max" does not match in "maximum". */
+function literalPattern(value: string): string {
+  const head = WORD_CHAR_RE.test(value.charAt(0)) ? '(?<![\\p{L}\\p{N}_])' : '';
+  const tail = WORD_CHAR_RE.test(value.charAt(value.length - 1)) ? '(?![\\p{L}\\p{N}_])' : '';
+  return `${head}${value.replace(REGEX_SPECIAL_RE, '\\$&')}${tail}`;
+}
+
+/** Replaces known personal values with their tokens in one pass (longest value first, whole words only). */
+function valueMasker(tokenByValue: ReadonlyMap<string, string>): (text: string) => string {
+  const values = [...tokenByValue.keys()].filter((value) => value.length >= MIN_MASK_LENGTH).sort((a, b) => b.length - a.length);
+  if (!values.length) return identity;
+  const re = new RegExp(values.map(literalPattern).join('|'), 'gu');
+  return (text) => text.replace(re, (match) => tokenByValue.get(match) ?? match);
 }
 
 /** Existing token for a value, or a new ⟦KIND_n⟧ token registered in the mapping. */
@@ -368,6 +400,11 @@ function analysisForPrompt(analysis: Analysis, mask: (text: string) => string): 
 
 function greetingLine(template: string, variables: Record<string, string>, userFallback: string): string {
   return renderTemplate(template, { user: userFallback, ...variables }).text.trim() || `Hi ${userFallback},`;
+}
+
+/** Renders {{variables}} the model copied from a macro instead of filling: value, fallback text or [ENTER ...]. */
+function fillLeftoverVariables(text: string, variables: Record<string, string>, userFallback: string): string {
+  return text.includes('{{') ? renderTemplate(text, { user: userFallback, ...variables }).text : text;
 }
 
 /** Facts the model may use: verified or unchecked (never outdated/contradicted/unverifiable), deduplicated. */

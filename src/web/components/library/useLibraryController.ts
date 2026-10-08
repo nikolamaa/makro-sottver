@@ -48,6 +48,8 @@ interface EditorState {
   stale: boolean;
   showErrors: boolean;
   tab: EditorTab;
+  /** Changes whenever a different macro (or a new one) is opened; keys the editor's local UI state. */
+  session: number;
 }
 
 const INITIAL: EditorState = {
@@ -59,7 +61,11 @@ const INITIAL: EditorState = {
   stale: false,
   showErrors: false,
   tab: 'edit',
+  session: 0,
 };
+
+/** Back to "nothing selected" (new session so the editor's local UI state resets). */
+const cleared = (p: EditorState): EditorState => ({ ...INITIAL, session: p.session + 1 });
 
 /** Unsaved editor state kept in memory when the page unmounts while dirty. */
 let stash: EditorState | null = null;
@@ -148,23 +154,33 @@ export function useLibraryController() {
   // Opening macros
   // ---------------------------------------------------------------------------
 
-  const loadMacro = useCallback((m: Macro, tab?: EditorTab) => {
+  /** Load a macro into the editor. Reloading the same macro (or the one just created) keeps tab + session. */
+  const loadMacro = useCallback((m: Macro, opts?: { tab?: EditorTab; keepSession?: boolean }) => {
     const draft = draftFromMacro(m);
     const baseSig = draftSignature(draft);
-    setEd((prev) => ({
-      selection: { mode: 'edit', id: m.id },
-      draft,
-      baseSig,
-      changeNote: '',
-      loadedFrom: m,
-      stale: false,
-      showErrors: false,
-      tab: tab ?? (prev.selection.mode === 'edit' && prev.selection.id === m.id ? prev.tab : 'edit'),
-    }));
+    setEd((prev) => {
+      const same = (prev.selection.mode === 'edit' || prev.selection.mode === 'loading') && prev.selection.id === m.id;
+      return {
+        selection: { mode: 'edit', id: m.id },
+        draft,
+        baseSig,
+        changeNote: '',
+        loadedFrom: m,
+        stale: false,
+        showErrors: false,
+        tab: opts?.tab ?? (same && prev.selection.mode === 'edit' ? prev.tab : 'edit'),
+        session: same || opts?.keepSession ? prev.session : prev.session + 1,
+      };
+    });
   }, []);
 
   const openNew = useCallback((seed?: DraftSeed | null) => {
-    setEd({ ...INITIAL, selection: { mode: 'new' }, draft: emptyDraft(seed ?? undefined), baseSig: draftSignature(emptyDraft()) });
+    setEd((p) => ({
+      ...cleared(p),
+      selection: { mode: 'new' },
+      draft: emptyDraft(seed ?? undefined),
+      baseSig: draftSignature(emptyDraft()),
+    }));
     focusField('title');
   }, []);
 
@@ -175,7 +191,7 @@ export function useLibraryController() {
         loadMacro(found);
         return;
       }
-      setEd({ ...INITIAL, selection: { mode: 'loading', id } });
+      setEd((p) => ({ ...cleared(p), selection: { mode: 'loading', id } }));
       api('GET /api/macros/:id', { params: { id } })
         .then((m) => {
           const s = edRef.current.selection;
@@ -188,7 +204,7 @@ export function useLibraryController() {
         })
         .catch((err: unknown) => {
           toast(errorMessage(err), 'danger');
-          setEd((p) => (p.selection.mode === 'loading' && p.selection.id === id ? INITIAL : p));
+          setEd((p) => (p.selection.mode === 'loading' && p.selection.id === id ? cleared(p) : p));
         });
     },
     [loadMacro],
@@ -207,7 +223,11 @@ export function useLibraryController() {
   const requestOpen = useCallback(
     (id: Id) => {
       const s = edRef.current.selection;
-      if ((s.mode === 'edit' || s.mode === 'loading') && s.id === id) return;
+      if ((s.mode === 'edit' || s.mode === 'loading') && s.id === id) {
+        // Opening the macro that is already open (e.g. Enter again in the list) moves focus into the editor.
+        if (s.mode === 'edit') focusField('title');
+        return;
+      }
       guard(() => openMacro(id));
     },
     [guard, openMacro],
@@ -221,7 +241,7 @@ export function useLibraryController() {
     guard(() => openNew());
   }, [guard, openNew]);
 
-  const requestClose = useCallback(() => guard(() => setEd(INITIAL)), [guard]);
+  const requestClose = useCallback(() => guard(() => setEd(cleared)), [guard]);
 
   // ---------------------------------------------------------------------------
   // Draft editing
@@ -279,7 +299,7 @@ export function useLibraryController() {
       const sameTarget =
         now.selection.mode === sel.mode && (sel.mode === 'new' || (now.selection.mode === 'edit' && now.selection.id === sel.id));
       if (sameTarget && now.draft === savedDraft) {
-        loadMacro(result);
+        loadMacro(result, { keepSession: true });
       } else if (sameTarget && now.draft) {
         // The agent kept typing while saving: keep the newer text, adopt server ids for the saved facts.
         const savedFacts = savedDraft.facts.filter((f) => !isBlankFact(f));
@@ -327,7 +347,7 @@ export function useLibraryController() {
     dirtyRef.current = false;
     const e = edRef.current;
     if (e.selection.mode === 'edit' && macroRef.current) loadMacro(macroRef.current);
-    else setEd(INITIAL);
+    else setEd(cleared);
     p?.run();
   }, [loadMacro]);
 
@@ -371,7 +391,7 @@ export function useLibraryController() {
           setArchived((list) => [...list.filter((x) => x.id !== m.id), archivedMacro]);
           actions.removeMacro(m.id);
           if (showArchivedRef.current) loadMacro(archivedMacro);
-          else setEd(INITIAL);
+          else setEd(cleared);
           toast(showArchivedRef.current ? 'Macro archived' : 'Macro archived. Tick “Archived” in the list to see or restore it.', 'success');
         } catch (err) {
           toast(errorMessage(err), 'danger');
@@ -408,7 +428,7 @@ export function useLibraryController() {
       setArchived((list) => list.filter((x) => x.id !== m.id));
       actions.removeMacro(m.id);
       dirtyRef.current = false;
-      setEd(INITIAL);
+      setEd(cleared);
       setDeleteOpen(false);
       toast(`“${m.title}” deleted permanently`, 'success');
     } catch (err) {
@@ -427,7 +447,7 @@ export function useLibraryController() {
           setBusy('revert');
           try {
             const r = await api('POST /api/macros/:id/revert', { params: { id: m.id }, body: { version } });
-            loadMacro(r, 'versions');
+            loadMacro(r, { tab: 'versions' });
             actions.upsertMacro(r);
             toast(
               r.version === m.version ? `v${version} has the same content as the current version` : `Reverted to v${version} (saved as v${r.version})`,
@@ -469,7 +489,7 @@ export function useLibraryController() {
       const restoredId = restored && restored.selection.mode === 'edit' ? restored.selection.id : null;
       const next = seed ? () => openNew(seed) : focusId && focusId !== restoredId ? () => openMacro(focusId) : null;
       if (restored) {
-        setEd(restored);
+        setEd((p) => ({ ...restored, session: p.session + 1 }));
         dirtyRef.current = true;
         if (next) setPending({ run: next });
         else toast('Restored your unsaved changes', 'info');
@@ -583,6 +603,7 @@ export function useLibraryController() {
     draft: ed.draft,
     changeNote: ed.changeNote,
     tab: ed.tab,
+    session: ed.session,
     stale: ed.stale,
     showErrors: ed.showErrors,
     issues,

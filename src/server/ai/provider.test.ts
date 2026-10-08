@@ -1,7 +1,16 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { AiError, anthropicCostUsd, costUsd, createAnthropicProvider, createOllamaProvider, priceFor, type JsonRequest } from './provider.js';
+import {
+  AiError,
+  anthropicCostUsd,
+  costUsd,
+  createAnthropicProvider,
+  createOllamaProvider,
+  isLoopbackUrl,
+  priceFor,
+  type JsonRequest,
+} from './provider.js';
 
 const Schema = z.object({ answer: z.string(), score: z.number().min(0).max(1) });
 
@@ -272,6 +281,33 @@ describe('createOllamaProvider', () => {
 
   it('is marked as a local provider', () => {
     expect(ollamaWith(() => json({})).provider).toMatchObject({ id: 'ollama', isCloud: false });
+  });
+
+  it('is marked as cloud when the URL points to another computer', () => {
+    const remote = createOllamaProvider({ url: 'https://gpu-box.example.com/', model: 'qwen3:4b', fetch: async () => json({}) });
+    expect(remote.isCloud).toBe(true);
+    expect(createOllamaProvider({ url: 'http://192.168.1.20:11434', model: 'qwen3:4b' }).isCloud).toBe(true);
+    expect(createOllamaProvider({ url: 'http://localhost:11434', model: 'qwen3:4b' }).isCloud).toBe(false);
+  });
+});
+
+describe('isLoopbackUrl', () => {
+  it.each([
+    ['http://127.0.0.1:11434', true],
+    ['http://127.1.2.3:11434', true],
+    ['http://localhost:11434', true],
+    ['http://LOCALHOST', true],
+    ['http://ollama.localhost:11434', true],
+    ['http://[::1]:11434', true],
+    ['http://0.0.0.0:11434', true],
+    ['not a url', true],
+    ['http://192.168.1.20:11434', false],
+    ['http://10.0.0.5', false],
+    ['https://ollama.example.com', false],
+    ['http://127.0.0.1.evil.com', false],
+    ['http://localhost.evil.com', false],
+  ])('%s -> %s', (url, expected) => {
+    expect(isLoopbackUrl(url)).toBe(expected);
   });
 });
 

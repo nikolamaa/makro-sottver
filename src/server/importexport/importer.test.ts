@@ -163,6 +163,14 @@ describe('parseImport csv', () => {
     expect(preview.items).toEqual([]);
     expect(preview.errors[0]).toMatch(/^The CSV could not be read/);
   });
+
+  it('detects the delimiter from the header even when the paste starts with blank lines', () => {
+    const semicolon = parseImport('csv', '\r\n  \n\nTitle;Body;Tags\nBonus;Claim it, then wager.;bonus\n', NO_EXISTING);
+    expect(semicolon.errors).toEqual([]);
+    expect(semicolon.items).toEqual([item({ title: 'Bonus', body: 'Claim it, then wager.', tags: ['bonus'] })]);
+    const tab = parseImport('csv', '\n\nTitle\tBody\nBonus\tClaim it, then wager.\n', NO_EXISTING);
+    expect(tab.items).toEqual([item({ title: 'Bonus', body: 'Claim it, then wager.' })]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -244,6 +252,62 @@ describe('parseImport json', () => {
   it('gives unique keys to facts that share a key', () => {
     const json = JSON.stringify([{ title: 'T', body: 'B', facts: [{ key: 'k', statement: 'one' }, { key: 'k', statement: 'two' }] }]);
     expect(parseImport('json', json, NO_EXISTING).items[0]?.facts.map((f) => f.key)).toEqual(['k', 'k_2']);
+  });
+
+  it('keeps de-duplicated fact keys within the 200 character key limit', () => {
+    const longKey = 'k'.repeat(200);
+    const json = JSON.stringify([{ title: 'T', body: 'B', facts: [{ key: longKey, statement: 'one' }, { key: longKey, statement: 'two' }] }]);
+    const preview = parseImport('json', json, NO_EXISTING);
+    expect(preview.errors).toEqual([]);
+    const keys = preview.items[0]?.facts.map((f) => f.key) ?? [];
+    expect(keys).toEqual([longKey, `${'k'.repeat(198)}_2`]);
+    expect(keys.every((k) => k.length <= 200)).toBe(true);
+  });
+
+  it('stops reading facts once 100 were kept instead of processing the rest of a huge list', () => {
+    const valid = Array.from({ length: 100 }, () => ({ key: 'same', statement: 'Deposits need 1 confirmation' }));
+    const invalid = Array.from({ length: 5000 }, () => 42);
+    const preview = parseImport('json', JSON.stringify([{ title: 'T', body: 'B', facts: [...valid, ...invalid] }]), NO_EXISTING);
+    const keys = preview.items[0]?.facts.map((f) => f.key) ?? [];
+    expect(keys).toHaveLength(100);
+    expect(new Set(keys).size).toBe(100);
+    expect(keys.at(-1)).toBe('same_100');
+    // The 5000 entries after the limit are not inspected (each would otherwise be reported as a bad fact).
+    expect(preview.errors).toEqual(['Item 1: only the first 100 facts were kept']);
+  });
+
+  it('drops fact sources that are not http(s) links and reports them, keeping the fact', () => {
+    const json = JSON.stringify([
+      {
+        title: 'T',
+        body: 'B',
+        facts: [
+          { statement: 'Min deposit is 10 USD', source: 'Confluence: Payments page' },
+          { statement: 'Min BTC withdrawal', source_url: 'javascript:alert(1)' },
+          { statement: 'KYC levels', source: 'https://help.stake.com/en/articles/kyc' },
+        ],
+      },
+    ]);
+    const preview = parseImport('json', json, NO_EXISTING);
+    expect(preview.items[0]?.facts.map((f) => [f.statement, f.sourceUrl])).toEqual([
+      ['Min deposit is 10 USD', null],
+      ['Min BTC withdrawal', null],
+      ['KYC levels', 'https://help.stake.com/en/articles/kyc'],
+    ]);
+    expect(preview.errors).toEqual([
+      'Item 1, fact 1: source "Confluence: Payments page" is not an http(s) link and was dropped',
+      'Item 1, fact 2: source "javascript:alert(1)" is not an http(s) link and was dropped',
+    ]);
+  });
+
+  it('accepts a hand-edited string version "1" in the export format', () => {
+    const json = JSON.stringify({ format: 'macropilot-macros', version: '1', macros: [{ title: 'A', body: 'Hi {{name}}' }] });
+    const preview = parseImport('json', json, NO_EXISTING);
+    expect(preview.errors).toEqual([]);
+    expect(preview.items).toEqual([item({ title: 'A', body: 'Hi {{name}}' })]);
+    expect(parseImport('json', '{"format":"macropilot-macros","version":"2","macros":[]}', NO_EXISTING).errors).toEqual([
+      'Unsupported export version "2"; this app reads version 1.',
+    ]);
   });
 
   it('reports invalid JSON, unsupported versions, wrong shapes and non-object items', () => {
@@ -445,6 +509,13 @@ describe('parseImport text', () => {
     expect(preview.errors).toEqual(['Block 1: missing body', 'Block 2: unknown intent(s) dropped: "free money"']);
   });
 
+  it('lists each unknown intent once and caps the list so one bad line cannot flood the preview', () => {
+    const text = 'Title\nIntents: a, b, A, c, d, e, f, g, a, deposit_help\nBody';
+    const preview = parseImport('text', text, NO_EXISTING);
+    expect(preview.items[0]?.intents).toEqual(['deposit_help']);
+    expect(preview.errors).toEqual(['Block 1: unknown intent(s) dropped: "a", "b", "c", "d", "e" and 2 more']);
+  });
+
   it('reports empty content', () => {
     expect(parseImport('text', ' \n\r\n ', NO_EXISTING)).toEqual({ items: [], errors: ['Nothing to import: the content is empty.'] });
     expect(parseImport('text', '---\n---', NO_EXISTING).errors).toEqual(['No macros found in the content.']);
@@ -474,6 +545,12 @@ describe('parseImport limits', () => {
     expect(preview.items).toEqual([]);
     expect(preview.errors).toHaveLength(1);
     expect(preview.errors[0]).toMatch(/too large .* maximum is 2 MB/);
+  });
+
+  it('rounds the reported size up so content just over the limit does not read as "2.0 MB"', () => {
+    const preview = parseImport('text', 'x'.repeat(2 * 1024 * 1024 + 1), NO_EXISTING);
+    expect(preview.errors).toEqual(['The content is too large (2.1 MB); the maximum is 2 MB. Split it into smaller files.']);
+    expect(parseImport('text', `Title\n${'x'.repeat(2 * 1024 * 1024 - 6)}`, NO_EXISTING).errors[0]).not.toMatch(/too large/);
   });
 
   it('rejects more than 5000 macros', () => {

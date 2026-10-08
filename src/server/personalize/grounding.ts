@@ -144,6 +144,7 @@ const URL_RE = new RegExp(
   'gi',
 );
 const URL_TRAILING_PUNCT_RE = /[.,;:!?'"’”]+$/;
+const DIGITS_RE = /\d+/g;
 /** Pseudonymization tokens (⟦NAME_1⟧, [[NAME_1]]) - never claims, and flagged when left in a reply. */
 const PSEUDONYM_TOKEN_RE = /⟦[^⟧\n]*⟧|\[\[[^\]\n]*\]\]/g;
 /** "1." / "2)" list markers at line start. */
@@ -159,7 +160,14 @@ const PROMISE_PATTERNS = [
   String.raw`\bwill\s+be\s+(?:credited|processed|approved|released|paid|sent|unlocked|reactivated)\s+(?:today|tonight|immediately|instantly|right\s+away|now)\b`,
   String.raw`\b(?:will\s+)?refund\s+you\b|\bwill\s+(?:be\s+)?refund(?:ed)?\b|\bissue\s+(?:you\s+)?a\s+refund\b`,
   String.raw`\b(?:reimburse|compensate)\s+you\b`,
-].map((source) => ({ find: new RegExp(source, 'gi'), test: new RegExp(source, 'i') }));
+].map((source) => new RegExp(source, 'gi'));
+
+/** A negation shortly before a promise phrase ("we cannot guarantee", "not 100% sure", "unable to refund you"). */
+const NEGATION_BEFORE_RE = /(?:\bnot|n['’]t|\bnever|\bno|\bcannot|\bunable\s+to)\s+(?:[\w'’]+\s+){0,3}$/i;
+/** How far back (in characters) a negation may precede the promise phrase. */
+const NEGATION_WINDOW = 40;
+const NON_SPACE_RE = /\S/;
+const LEADING_WORD_RE = /^\S*/;
 
 const DETAILS: Record<GuardrailKind, string> = {
   unsupported_number: 'Not found in the macro, facts or customer message - check this number before sending.',
@@ -188,7 +196,8 @@ interface NumericClaim extends Span {
   significant: boolean;
 }
 
-interface Stamp extends Span {
+/** A date or time of day, e.g. key "date:2026-10-08" / "time:14:30". */
+interface Stamp {
   text: string;
   key: string;
 }
@@ -243,11 +252,11 @@ function toClaim(m: RegExpMatchArray): NumericClaim | null {
 function stampsIn(text: string): Stamp[] {
   const stamps: Stamp[] = [];
   for (const m of text.matchAll(DATE_RE)) {
-    stamps.push({ text: m[0], key: `date:${m[0].replace(/[/.]/g, '-')}`, start: m.index ?? 0, end: (m.index ?? 0) + m[0].length });
+    stamps.push({ text: m[0], key: `date:${m[0].replace(/[/.]/g, '-')}` });
   }
   for (const m of text.matchAll(TIME_RE)) {
     const key = `time:${Number(m[1])}:${m[2]}${(m[3] ?? '').toLowerCase()}`;
-    stamps.push({ text: m[0].trim(), key, start: m.index ?? 0, end: (m.index ?? 0) + m[0].length });
+    stamps.push({ text: m[0].trim(), key });
   }
   return stamps;
 }
@@ -296,67 +305,84 @@ interface SourceIndex {
   numbers: Set<string>;
   /** "24|hour", "100|USD", "3-5|day" ... */
   quantities: Set<string>;
-  currencies: Set<string>;
+  /** Numbers and currencies the customer or the agent supplied (message + variable values). */
+  customerNumbers: Set<string>;
+  customerCurrencies: Set<string>;
   stamps: Set<string>;
   urls: string[];
   emails: Set<string>;
-  texts: string[];
+  /** Company-authored texts (macro bodies + facts): the only sources that may license promise wording. */
+  policyTexts: string[];
 }
 
 function quantityKey(value: string, unit: string | null): string {
   return `${value}|${unit ?? ''}`;
 }
 
-function sourceTexts(sources: GroundingSources): string[] {
-  const variables = Object.values(sources.variables).filter((v): v is string => typeof v === 'string');
-  return [
+function nonEmpty(texts: string[]): string[] {
+  return texts.filter((t) => typeof t === 'string' && t.trim() !== '');
+}
+
+/** Macro bodies (raw and rendered with the variables) and fact statements/values/source URLs. */
+function policyTexts(sources: GroundingSources): string[] {
+  return nonEmpty([
     ...sources.macroBodies,
     ...sources.macroBodies.map((body) => renderTemplate(body, sources.variables).text),
     ...sources.facts.flatMap((f) => [f.statement, f.value, f.sourceUrl ?? '']),
-    sources.message,
-    ...variables,
-  ].filter((t) => typeof t === 'string' && t.trim() !== '');
+  ]);
+}
+
+/** What the customer wrote and what the agent confirmed (variable values). */
+function customerTexts(sources: GroundingSources): string[] {
+  return nonEmpty([sources.message, ...Object.values(sources.variables).filter((v): v is string => typeof v === 'string')]);
+}
+
+function addScan(index: SourceIndex, text: string, fromCustomer: boolean): void {
+  const s = scan(text);
+  for (const url of s.urls) index.urls.push(url.normalized);
+  for (const email of s.emails) index.emails.add(email);
+  for (const stamp of s.stamps) {
+    index.stamps.add(stamp.key);
+    for (const part of stamp.text.match(DIGITS_RE) ?? []) index.numbers.add(canonicalQuantity(part, false));
+  }
+  for (const claim of s.claims) {
+    for (const value of claim.values) {
+      index.numbers.add(value);
+      if (fromCustomer) index.customerNumbers.add(value);
+      if (claim.unit) index.quantities.add(quantityKey(value, claim.unit));
+    }
+    if (claim.values.length > 1) index.quantities.add(quantityKey(claim.values.join('-'), claim.unit));
+    if (fromCustomer && claim.unit && CURRENCY_CODES.has(claim.unit)) index.customerCurrencies.add(claim.unit);
+  }
+  if (!fromCustomer) return;
+  for (const m of text.matchAll(CURRENCY_MENTION_RE)) {
+    const code = canonicalUnit(m[0]);
+    if (code) index.customerCurrencies.add(code);
+  }
 }
 
 function buildSourceIndex(sources: GroundingSources): SourceIndex {
   const index: SourceIndex = {
     numbers: new Set(),
     quantities: new Set(),
-    currencies: new Set(),
+    customerNumbers: new Set(),
+    customerCurrencies: new Set(),
     stamps: new Set(),
     urls: [],
     emails: new Set(),
-    texts: sourceTexts(sources),
+    policyTexts: policyTexts(sources),
   };
-  for (const text of index.texts) {
-    const s = scan(text);
-    for (const url of s.urls) index.urls.push(url.normalized);
-    for (const email of s.emails) index.emails.add(email);
-    for (const stamp of s.stamps) {
-      index.stamps.add(stamp.key);
-      for (const part of stamp.text.match(/\d+/g) ?? []) index.numbers.add(canonicalQuantity(part, false));
-    }
-    for (const claim of s.claims) {
-      for (const value of claim.values) {
-        index.numbers.add(value);
-        if (claim.unit) index.quantities.add(quantityKey(value, claim.unit));
-      }
-      if (claim.values.length > 1) index.quantities.add(quantityKey(claim.values.join('-'), claim.unit));
-      if (claim.unit && CURRENCY_CODES.has(claim.unit)) index.currencies.add(claim.unit);
-    }
-    for (const m of text.matchAll(CURRENCY_MENTION_RE)) {
-      const code = canonicalUnit(m[0]);
-      if (code) index.currencies.add(code);
-    }
-  }
+  for (const text of index.policyTexts) addScan(index, text, false);
+  for (const text of customerTexts(sources)) addScan(index, text, true);
   return index;
 }
 
 function valueSupported(value: string, unit: string | null, index: SourceIndex): boolean {
   if (!unit) return index.numbers.has(value);
   if (index.quantities.has(quantityKey(value, unit))) return true;
-  // "250" and "USDT" both come from the customer/agent: "250 USDT" is supported.
-  return CURRENCY_CODES.has(unit) && index.numbers.has(value) && index.currencies.has(unit);
+  // "250" and "USDT" both come from the customer/agent (message or variables): "250 USDT" is supported. A number
+  // and a currency that merely appear somewhere in the macro ("$10 minimum", "100 free spins") do not make "$100".
+  return CURRENCY_CODES.has(unit) && index.customerNumbers.has(value) && index.customerCurrencies.has(unit);
 }
 
 /**
@@ -371,6 +397,18 @@ function claimSupported(claim: NumericClaim, index: SourceIndex): boolean {
 
 function urlSupported(url: string, index: SourceIndex): boolean {
   return index.urls.some((source) => source === url || source.startsWith(`${url}/`));
+}
+
+/** Non-negated matches of a promise pattern: "we guarantee" counts, "we cannot guarantee" does not. */
+function affirmedPromises(text: string, pattern: RegExp): RegExpMatchArray[] {
+  return [...text.matchAll(pattern)].filter((m) => {
+    const start = m.index ?? 0;
+    const from = Math.max(0, start - NEGATION_WINDOW);
+    let before = text.slice(from, start);
+    // Drop a word cut in half by the window ("casi|no guarantee" must not read as "no guarantee").
+    if (from > 0 && NON_SPACE_RE.test(text.charAt(from - 1))) before = before.replace(LEADING_WORD_RE, '');
+    return !NEGATION_BEFORE_RE.test(before);
+  });
 }
 
 function overlaps(span: Span, spans: Span[]): boolean {
@@ -390,8 +428,10 @@ function overlaps(span: Span, spans: Span[]): boolean {
  *    "$100" ~ "100 USD" ~ "100 dollars". Placeholders, ⟦TOKENS⟧, URLs, emails and "1." list markers are ignored.
  *  - unsupported_url: URLs/domains (and email addresses) not present in the sources. Query/fragment/trailing
  *    slash are ignored; a link to a parent path of a source URL on the same full hostname is accepted.
- *  - promise: guarantee language not present in the sources ("guarantee", "will definitely", "100%",
- *    "I promise", "will be credited today", "refund you" ...).
+ *  - promise: guarantee language ("guarantee", "will definitely", "100%", "I promise", "will be credited today",
+ *    "refund you" ...) that the macro bodies / facts do not use themselves. The customer's own words never license a
+ *    promise ("Can you guarantee it?" -> "I guarantee it" is flagged), and negated phrases ("we cannot guarantee",
+ *    "not 100% sure") are neither promises in the reply nor licenses in the sources.
  *  - placeholder_left: any [ENTER ...] placeholder (or unresolved ⟦TOKEN⟧) left in the text.
  * Issues are de-duplicated and carry the offending fragment plus a short detail.
  */
@@ -406,14 +446,13 @@ export function checkGrounding(reply: string, sources: GroundingSources): Guardr
     issues.push({ kind, text, detail });
   };
 
+  // Promise phrases ("100%" included) are judged as promises only, never also as numeric claims.
   const promiseSpans: Span[] = [];
   const promiseIssues: string[] = [];
   for (const pattern of PROMISE_PATTERNS) {
-    if (index.texts.some((t) => pattern.test.test(t))) continue;
-    for (const m of reply.matchAll(pattern.find)) {
-      promiseSpans.push({ start: m.index ?? 0, end: (m.index ?? 0) + m[0].length });
-      promiseIssues.push(m[0]);
-    }
+    for (const m of reply.matchAll(pattern)) promiseSpans.push({ start: m.index ?? 0, end: (m.index ?? 0) + m[0].length });
+    if (index.policyTexts.some((t) => affirmedPromises(t, pattern).length > 0)) continue;
+    for (const m of affirmedPromises(reply, pattern)) promiseIssues.push(m[0]);
   }
 
   const scanned = scan(reply);

@@ -61,10 +61,13 @@ export function AiSection({
   settings,
   update,
   applyServerSettings,
+  whenSaved,
 }: {
   settings: AppSettings;
   update: (patch: SettingsPatch) => void;
   applyServerSettings: (s: AppSettings) => void;
+  /** Resolves once pending setting changes reached the server. */
+  whenSaved: () => Promise<void>;
 }) {
   const ai = settings.ai;
   const strictLocal = settings.privacy.strictLocal;
@@ -133,7 +136,7 @@ export function AiSection({
             checked={ai.autoPolish}
             onChange={(autoPolish) => update({ ai: { autoPolish } })}
           />
-          <TestConnection />
+          <TestConnection whenSaved={whenSaved} />
         </div>
       ) : null}
 
@@ -219,6 +222,9 @@ function AnthropicSettings({
               id="st-anthropic-key"
               type="password"
               autoComplete="off"
+              data-1p-ignore=""
+              data-lpignore="true"
+              data-bwignore=""
               spellCheck={false}
               placeholder={ai.anthropicKeySet ? 'Paste a new key to replace it' : 'sk-ant-...'}
               value={keyDraft}
@@ -326,11 +332,13 @@ function OllamaSettings({ settings, update }: { settings: AppSettings; update: (
   );
 }
 
-function TestConnection() {
+function TestConnection({ whenSaved }: { whenSaved: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const run = async () => {
     setBusy(true);
     try {
+      // The server tests the SAVED settings: send a just-edited URL/model/provider first.
+      await whenSaved();
       const res = await api('POST /api/ai/test');
       toast(res.detail || (res.ok ? 'Connection works' : 'Connection failed'), res.ok ? 'success' : 'danger', 4000);
       actions.refreshHealth().catch((err: unknown) => toast(errorMessage(err), 'danger'));
@@ -422,7 +430,7 @@ function UsagePanel({ provider, budget }: { provider: AiProviderId; budget: numb
             <div className="st-budget">
               <Meter value={usage?.costUsd ?? 0} max={cap} label="Monthly AI budget used" />
               <span className="small muted">
-                {formatUsd(usage?.costUsd ?? 0, 4)} of {formatUsd(cap, 2)} budget ({pct.toFixed(pct < 10 ? 1 : 0)}%)
+                {formatUsd(usage?.costUsd ?? 0, 4)} of {formatUsd(cap, 2)} budget ({pct > 0 && pct < 0.1 ? '<0.1' : pct.toFixed(pct < 10 ? 1 : 0)}%)
               </span>
             </div>
           ) : (

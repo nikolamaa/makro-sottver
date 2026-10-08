@@ -8,6 +8,7 @@
  */
 import { CONCEPTS, normalizeForMatch } from '../domain/igaming.js';
 
+/** Concept mentions found in a message. */
 export interface ConceptHits {
   /** concept id -> unique matched terms (canonical spelling from CONCEPTS), in order of appearance. */
   readonly byConcept: ReadonlyMap<string, readonly string[]>;

@@ -35,6 +35,8 @@ export interface SearchResult {
 
 const BODY_PASSAGE_CHARS = 800;
 const EMBED_BATCH = 64;
+/** A slow query embedding (e.g. Ollama loading its model) must not block recommendations. */
+const DEFAULT_QUERY_EMBED_TIMEOUT_MS = 2000;
 
 interface Entry extends IndexedMacro {
   /** Content key (HMAC) used for the embedding cache. */
@@ -56,12 +58,12 @@ interface EmbedJob {
 }
 
 /** Passage describing what the macro is for: title, example questions, intent labels, tags. */
-export function headPassage(m: Macro): string {
+function headPassage(m: Macro): string {
   return [m.title, ...m.triggers, ...m.intents.map((i) => INTENT_LABELS[i]), ...m.tags].filter((s) => s.trim()).join('\n');
 }
 
 /** Passage with what the macro says: body without template variables, first 800 chars. */
-export function bodyPassage(m: Macro): string {
+function bodyPassage(m: Macro): string {
   return stripTemplateVariables(m.body).replace(/\s+/g, ' ').trim().slice(0, BODY_PASSAGE_CHARS);
 }
 
@@ -72,14 +74,17 @@ function errorMessage(err: unknown): string {
 export class MacroIndex {
   private state: IndexState;
   private readonly cache: EmbeddingCache | null;
+  private readonly queryEmbedTimeoutMs: number;
   /** Tail of the mutation queue (rebuild/upsert/setEmbedder run one at a time). */
   private queue: Promise<unknown> = Promise.resolve();
   /** Monotonic operation counter; a remove() newer than a pending write cancels that write. */
   private seq = 0;
   private readonly removedAt = new Map<Id, number>();
 
-  constructor(opts: { embedder: Embedder; cache?: EmbeddingCache }) {
+  /** `queryEmbedTimeoutMs`: max wait for the query vector before ranking without it (default 2000). */
+  constructor(opts: { embedder: Embedder; cache?: EmbeddingCache; queryEmbedTimeoutMs?: number }) {
     this.cache = opts.cache ?? null;
+    this.queryEmbedTimeoutMs = opts.queryEmbedTimeoutMs ?? DEFAULT_QUERY_EMBED_TIMEOUT_MS;
     this.state = { embedder: opts.embedder, entries: new Map(), lexical: createLexicalIndex([]) };
   }
 
@@ -170,13 +175,23 @@ export class MacroIndex {
     });
   }
 
+  /**
+   * Query vector, or null when the embedder fails or takes longer than `queryEmbedTimeoutMs`; search then
+   * keeps working on lexical + intent signals.
+   */
   private async embedQuery(embedder: Embedder, message: string): Promise<Float32Array | null> {
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), this.queryEmbedTimeoutMs);
+    });
+    const embedding = embedder.embed([message], 'query').then(
+      ([vector]) => vector ?? null,
+      () => null,
+    );
     try {
-      const [vector] = await embedder.embed([message], 'query');
-      return vector ?? null;
-    } catch {
-      // Search keeps working on lexical + intent signals; the embedder status reports the problem.
-      return null;
+      return await Promise.race([embedding, timeout]);
+    } finally {
+      clearTimeout(timer);
     }
   }
 

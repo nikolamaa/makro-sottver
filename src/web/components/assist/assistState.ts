@@ -57,6 +57,8 @@ export interface AssistState {
   recError: string | null;
   /** Ordered macro ids: first = primary, the rest are combined into the same reply. */
   selectedIds: Id[];
+  /** True when the agent chose the selection (it then survives message edits); false for auto-selection. */
+  manualSelection: boolean;
   reply: ReplyState;
   busy: { ai: boolean; draft: boolean };
 }
@@ -100,16 +102,20 @@ export const INITIAL_ASSIST_STATE: AssistState = {
   resultFor: '',
   recError: null,
   selectedIds: [],
+  manualSelection: false,
   reply: EMPTY_REPLY,
   busy: { ai: false, draft: false },
 };
 
-/** Identifies one fast-personalization input (selection + message + agent variables). */
-export function personalizeKey(macroIds: readonly Id[], message: string, variablesKey: string): string {
-  return `${macroIds.join(',')}\u0000${variablesKey}\u0000${message}`;
+/**
+ * Identifies one fast-personalization input: selection, macro versions (an edited macro is re-personalized),
+ * agent variables and message.
+ */
+export function personalizeKey(macroIds: readonly Id[], macroVersions: string, message: string, variablesKey: string): string {
+  return `${macroIds.join(',')}\u0000${macroVersions}\u0000${variablesKey}\u0000${message}`;
 }
 
-/** Macros selected automatically for a fresh result: the best one, unless nothing matches well. */
+/** Macros selected automatically for a new result: the best one, unless nothing matches well. */
 export function autoSelection(result: RecommendResponse): Id[] {
   const top = result.recommendations[0];
   return top && !result.noGoodMatch ? [top.macroId] : [];
@@ -142,20 +148,43 @@ function withGenerated(reply: ReplyState, res: PersonalizeResponse): ReplyState 
 }
 
 function onMessage(state: AssistState, message: string, fresh: boolean): AssistState {
-  if (!message.trim()) return { ...INITIAL_ASSIST_STATE, message, customerName: fresh ? '' : state.customerName, overrides: fresh ? {} : state.overrides };
+  if (message === state.message) return state;
+  if (!message.trim()) {
+    return { ...INITIAL_ASSIST_STATE, message, customerName: fresh ? '' : state.customerName, overrides: fresh ? {} : state.overrides };
+  }
   if (!fresh) return { ...state, message };
-  return { ...state, message, customerName: '', overrides: {}, selectedIds: [], reply: EMPTY_REPLY, busy: { ...state.busy, ai: false } };
+  // New conversation: drop the previous customer's values and reply. If the current result already belongs to
+  // this text no new request will run, so select from it right away.
+  const reuse = state.result !== null && message === state.resultFor;
+  return {
+    ...state,
+    message,
+    customerName: '',
+    overrides: {},
+    selectedIds: reuse && state.result ? autoSelection(state.result) : [],
+    manualSelection: false,
+    reply: EMPTY_REPLY,
+    busy: { ...state.busy, ai: false },
+  };
+}
+
+/** The agent's own selection survives message edits while every selected macro is still recommended. */
+function keepsManualSelection(state: AssistState, result: RecommendResponse): boolean {
+  const ids = state.selectedIds;
+  return state.manualSelection && ids.length > 0 && ids.every((id) => result.recommendations.some((r) => r.macroId === id));
 }
 
 function onRecommended(state: AssistState, message: string, result: RecommendResponse): AssistState {
   if (message !== state.message) return state;
-  const selectedIds = autoSelection(result);
+  const manualSelection = keepsManualSelection(state, result);
+  const selectedIds = manualSelection ? state.selectedIds : autoSelection(result);
   return {
     ...state,
     result,
     resultFor: message,
     recError: null,
     selectedIds,
+    manualSelection,
     reply: selectedIds.length ? state.reply : EMPTY_REPLY,
     busy: selectedIds.length ? state.busy : { ...state.busy, ai: false },
   };
@@ -175,7 +204,7 @@ export function assistReducer(state: AssistState, action: AssistAction): AssistS
     case 'recommendFailed':
       return action.message === state.message ? { ...state, result: null, resultFor: action.message, recError: action.error } : state;
     case 'select':
-      return { ...state, selectedIds: action.ids, reply: { ...state.reply, pendingAi: null } };
+      return { ...state, selectedIds: action.ids, manualSelection: true, reply: { ...state.reply, pendingAi: null } };
     case 'fastReady':
       return {
         ...state,
@@ -202,7 +231,7 @@ export function assistReducer(state: AssistState, action: AssistAction): AssistS
       const busy = { ...state.busy, draft: false };
       if (action.message !== state.message) return { ...state, busy };
       const reply: ReplyState = { ...EMPTY_REPLY, text: action.res.text, generated: action.res.text, meta: metaFromDraft(action.res), draft: action.res };
-      return { ...state, selectedIds: [], reply, busy };
+      return { ...state, selectedIds: [], manualSelection: false, reply, busy };
     }
     case 'draftFailed':
       return { ...state, busy: { ...state.busy, draft: false } };

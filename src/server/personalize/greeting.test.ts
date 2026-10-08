@@ -45,6 +45,20 @@ describe('splitGreeting', () => {
     });
   });
 
+  it('splits a longer greeting line at its first clause end instead of swallowing the content', () => {
+    expect(splitGreeting('Hello {{user}} and thank you for contacting Stake about the bonus, it is sent every Saturday.')).toEqual({
+      greeting: 'Hello {{user}} and thank you for contacting Stake about the bonus,',
+      separator: ' ',
+      rest: 'it is sent every Saturday.',
+    });
+    expect(splitGreeting('Hi John. Your withdrawal is pending.')).toEqual({ greeting: 'Hi John.', separator: ' ', rest: 'Your withdrawal is pending.' });
+    expect(splitGreeting('Dear Mr. Smith, your account is verified.')).toEqual({
+      greeting: 'Dear Mr. Smith,',
+      separator: ' ',
+      rest: 'your account is verified.',
+    });
+  });
+
   it('handles a greeting-only text and leading blank lines', () => {
     expect(splitGreeting('\n\nHi there,')).toEqual({ greeting: 'Hi there,', separator: '\n', rest: '' });
   });

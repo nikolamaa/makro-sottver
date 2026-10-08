@@ -26,11 +26,11 @@ export const BODY_FACTOR = 0.85;
  * Lexical saturation: lexical = bm25/maxBm25 * (1 - exp(-maxBm25 / LEXICAL_SCALE)), so a weak best hit
  * (one common word in the body) stays weak instead of being normalized to 1.
  */
-export const LEXICAL_SCALE = 12;
+export const LEXICAL_SCALE = 60;
 
 /** Logistic confidence curve: 50% at combined = CONFIDENCE_MIDPOINT, slope CONFIDENCE_SLOPE. */
-export const CONFIDENCE_MIDPOINT = 0.4;
-export const CONFIDENCE_SLOPE = 7.5;
+export const CONFIDENCE_MIDPOINT = 0.45;
+export const CONFIDENCE_SLOPE = 6.5;
 
 /** Minimum analysis score for an intent to count as "asked" (diversification, uncovered intents). */
 export const WANTED_INTENT_MIN_SCORE = 0.35;

@@ -1,5 +1,5 @@
 /** Reply body editor: textarea + "Insert variable" (at the cursor) + detected variables + live preview. */
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useMemo, useRef, useState } from 'react';
 import { listVariables, parseTemplate } from '../../../shared/template';
 import { STANDARD_VARIABLES } from '../../../shared/types';
 import { useHotkeys } from '../../hotkeys';
@@ -29,7 +29,9 @@ export function BodyEditor({
   const [samples, setSamples] = useState(() => readLocal(SAMPLES_KEY) !== '0');
 
   const variables = useMemo(() => listVariables(value), [value]);
-  const { nodes, stats } = usePreview(value, samples ? SAMPLE_VALUES : NO_VALUES);
+  // The preview may lag a frame behind fast typing; the textarea never does.
+  const previewBody = useDeferredValue(value);
+  const { nodes, stats } = usePreview(previewBody, samples ? SAMPLE_VALUES : NO_VALUES);
 
   const insert = useCallback(
     (token: string) => {
@@ -130,6 +132,7 @@ export function BodyEditor({
                 <button
                   type="button"
                   key={v}
+                  tabIndex={-1}
                   className={`lib-var-chip${custom ? ' is-custom' : ''}`}
                   onClick={() => reveal(v)}
                   title={custom ? 'Custom variable: the agent fills it in manually' : 'Standard variable: filled automatically when known'}
@@ -151,7 +154,7 @@ export function BodyEditor({
             Sample values
           </label>
         </div>
-        <TemplatePreview nodes={nodes} empty={!value.trim()} />
+        <TemplatePreview nodes={nodes} empty={!previewBody.trim()} />
         <div className="lib-preview-legend small muted" aria-live="polite">
           {stats.placeholders ? (
             <span>

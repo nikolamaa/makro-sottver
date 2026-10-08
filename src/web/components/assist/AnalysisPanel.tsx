@@ -1,7 +1,8 @@
 import { memo } from 'react';
 import type { Analysis, Entity, RecommendResponse } from '../../../shared/types';
 import { INTENT_LABELS } from '../../../shared/types';
-import { Badge, copyToClipboard, toast } from '../../ui';
+import { Badge, toast } from '../../ui';
+import { copyText } from './clipboard';
 import { percent, plural, sentimentTone, timingLabel, urgencyTone } from './format';
 
 interface AnalysisPanelProps {
@@ -24,7 +25,7 @@ function uniqueEntities(entities: readonly Entity[]): Entity[] {
 
 async function copyEntity(entity: Entity): Promise<void> {
   const label = entity.type.replace(ENTITY_LABEL_SEPARATORS, ' ');
-  if (await copyToClipboard(entity.value)) toast(`Copied ${label}`, 'success', 1200);
+  if (await copyText(entity.value)) toast(`Copied ${label}`, 'success', 1200);
   else toast('Copy failed', 'danger');
 }
 

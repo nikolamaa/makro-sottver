@@ -29,6 +29,8 @@ const BGE_QUERY_PREFIX = 'Represent this sentence for searching relevant passage
 const TRANSFORMERS_BATCH = 32;
 const OLLAMA_BATCH = 32;
 const OLLAMA_TIMEOUT_MS = 10_000;
+/** Keep the embedding model loaded between messages so queries do not wait for Ollama to reload it. */
+const OLLAMA_KEEP_ALIVE = '30m';
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -284,7 +286,7 @@ export function createOllamaEmbedder(opts: { url: string; model: string; fetch?:
       res = await doFetch(endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ model, input }),
+        body: JSON.stringify({ model, input, keep_alive: OLLAMA_KEEP_ALIVE }),
         signal: AbortSignal.timeout(OLLAMA_TIMEOUT_MS),
       });
     } catch (err) {

@@ -21,7 +21,8 @@
     "test:e2e": "node scripts/e2e.mjs",
     "eval": "tsx scripts/eval-recommendations.ts",
     "recover": "node --disable-warning=ExperimentalWarning dist/node/server/recover.js",
-    "setup": "npm install && npm run build"
+    "setup": "npm install && npm run build",
+    "docs:prompts": "tsx scripts/gen-prompts-doc.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.132.1",

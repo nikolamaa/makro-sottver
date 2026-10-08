@@ -7,8 +7,6 @@ import { describe, expect, it } from 'vitest';
 import type { Analysis, Intent, Macro, QuestionSpan } from '../../shared/types.js';
 import { createBuiltinEmbedder } from './embedder.js';
 import { MacroIndex } from './macroIndex.js';
-import { buildLexicalQuery } from './query.js';
-import { searchLexical } from './lexical.js';
 
 // ---------------------------------------------------------------------------
 // Fixture library
@@ -566,6 +564,23 @@ describe('MacroIndex recommendation quality (builtin embedder)', () => {
     expect(res.uncoveredIntents).toEqual(['affiliate']);
   });
 
+  it('treats an analyzer-only intent as covered by a related macro intent', async () => {
+    const index = await buildIndex();
+    const res = await index.search(
+      'my btc withdrawal is still pending',
+      analysisOf(
+        [
+          ['withdrawal_pending', 0.8],
+          ['withdrawal_help', 0.4],
+        ],
+        [{ text: 'my btc withdrawal is still pending', intent: 'withdrawal_pending' }],
+      ),
+      { ...OPTS, maxResults: 1 },
+    );
+    expect(res.recommendations.map((r) => r.macroId)).toEqual(['wd-pending-crypto']);
+    expect(res.uncoveredIntents).toEqual([]);
+  });
+
   it('rebuilds 2,000 macros in < 3 s and searches in < 50 ms on average', async () => {
     const big = generateLibrary(2000);
     const index = new MacroIndex({ embedder: createBuiltinEmbedder() });
@@ -616,20 +631,3 @@ function generateLibrary(count: number): Macro[] {
   }
   return out;
 }
-
-describe.runIf(process.env.DEBUG_SEARCH)('debug dump', () => {
-  it('dumps', async () => {
-    const index = await buildIndex();
-    const rows: string[] = [];
-    const all = [...LABELED, { message: "what's the weather in Paris tomorrow", expected: '-', intents: [['general', 0.25]] as [Intent, number][] }, { message: 'can you recommend a good pizza place near me', expected: '-', intents: [['general', 0.25]] as [Intent, number][] }, { message: 'can I stake my withdrawal for interest?', expected: '-', intents: [['withdrawal_help', 0.4]] as [Intent, number][] }, { message: 'my withdrawl is pendng for 5 hours', expected: 'wd-pending-crypto', intents: [['general', 0.2]] as [Intent, number][] }, { message: 'how do i verfy my acount', expected: 'kyc-level2', intents: [['general', 0.2]] as [Intent, number][] }, { message: 'deposite not credted after 2 hours', expected: 'dep-crypto-missing', intents: [['general', 0.2]] as [Intent, number][] }, { message: 'how dose rakebak work', expected: 'bonus-rakeback', intents: [['general', 0.2]] as [Intent, number][] }, { message: 'i forgot my pasword', expected: 'acc-password-reset', intents: [['general', 0.2]] as [Intent, number][] }];
-    for (const l of all) {
-      const res = await index.search(l.message, analysisOf(l.intents), { maxResults: 3, minConfidence: 45 });
-      const ok = res.recommendations[0]?.macroId === l.expected ? 'OK ' : 'XX ';
-      const q = buildLexicalQuery(l.message);
-      const hits = searchLexical((index as any).state.lexical, q);
-      rows.push(`${ok}${l.expected.padEnd(28)} "${l.message}" maxBm25=${hits[0]?.score.toFixed(1)} n=${q.terms.length - q.expansions.size} top=${hits[0]?.id} 2nd=${hits[1]?.score.toFixed(1)}`);
-      for (const r of res.recommendations) rows.push(`     ${r.macroId.padEnd(28)} ${String(r.confidence).padStart(3)} s=${r.breakdown.semantic} l=${r.breakdown.lexical} i=${r.breakdown.intent} | ${r.reason} [${r.matchedTerms.join(',')}]`);
-    }
-    console.log(rows.join('\n'));
-  });
-});

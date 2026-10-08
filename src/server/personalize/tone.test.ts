@@ -142,8 +142,20 @@ describe('insertAfterGreeting', () => {
     expect(insertAfterGreeting('Hi John,\nHere is how it works.', S)).toBe(`Hi John,\n${S} Here is how it works.`);
   });
 
-  it('inserts inline after a short inline greeting and capitalizes the continuation', () => {
-    expect(insertAfterGreeting('Hi John, your withdrawal is pending.', S)).toBe(`Hi John, ${S} Your withdrawal is pending.`);
+  it('moves an inline greeting ending with a comma onto its own line and capitalizes the continuation', () => {
+    expect(insertAfterGreeting('Hi John, your withdrawal is pending.', S)).toBe(`Hi John,\n\n${S} Your withdrawal is pending.`);
+    expect(insertAfterGreeting('Hi John, 1. Open Settings', S)).toBe(`Hi John,\n\n${S}\n\n1. Open Settings`);
+  });
+
+  it("keeps an inline greeting ending with '!' on the same line", () => {
+    expect(insertAfterGreeting('Hi John! your withdrawal is pending.', S)).toBe(`Hi John! ${S} Your withdrawal is pending.`);
+  });
+
+  it('does not upper-case camel-cased words such as iOS', () => {
+    expect(insertAfterGreeting('Hi John,\n\niOS app users can update in the App Store.', S)).toBe(
+      `Hi John,\n\n${S} iOS app users can update in the App Store.`,
+    );
+    expect(insertAfterGreeting('Hi John, eSports bets settle later.', S)).toBe(`Hi John,\n\n${S} eSports bets settle later.`);
   });
 
   it('puts the sentence on its own paragraph before lists and placeholders', () => {

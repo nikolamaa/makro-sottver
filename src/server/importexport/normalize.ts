@@ -70,6 +70,7 @@ const COMBINING_MARKS_RE = /[\u0300-\u036f]/g;
 const EDGE_UNDERSCORES_RE = /^_+|_+$/g;
 const SLUG_MAX_LENGTH = 60;
 const MAX_UNKNOWN_SHOWN = 5;
+const HTTP_PREFIX_RE = /^https?:/i;
 
 const FACT_STATUSES: ReadonlySet<string> = new Set<FactStatus>(['unchecked', 'verified', 'outdated', 'contradicted', 'unverifiable']);
 
@@ -213,15 +214,19 @@ function keepFirst<T>(values: T[], max: number, noun: string, label: string, log
 
 function readIntents(value: unknown, label: string, log: ProblemLog): Intent[] {
   const intents: Intent[] = [];
-  const unknown = new Set<string>();
+  /** Lowercased name -> name as first written, so "Foo" and "foo" are reported once. */
+  const unknown = new Map<string, string>();
   for (const raw of asList(value, LIST_SPLIT_RE)) {
     const text = cleanLine(raw);
     if (!text) continue;
     const intent = INTENT_LOOKUP.get(slugify(text));
-    if (!intent) unknown.add(text);
-    else if (!intents.includes(intent)) intents.push(intent);
+    if (intent) {
+      if (!intents.includes(intent)) intents.push(intent);
+    } else if (!unknown.has(text.toLowerCase())) {
+      unknown.set(text.toLowerCase(), text);
+    }
   }
-  if (unknown.size) log.add(`${label}: unknown intent(s) dropped: ${describeUnknown([...unknown])}`);
+  if (unknown.size) log.add(`${label}: unknown intent(s) dropped: ${describeUnknown([...unknown.values()])}`);
   return keepFirst(intents, IMPORT_LIMITS.maxIntents, 'intents', label, log);
 }
 
@@ -250,9 +255,10 @@ function readFacts(value: unknown, label: string, log: ProblemLog): FactInput[] 
       log.add(`${label}: only the first ${IMPORT_LIMITS.maxFacts} facts were kept`);
       break;
     }
-    const result = toFact(list[i]);
+    const where = `${label}, fact ${i + 1}`;
+    const result = toFact(list[i], (note) => log.add(`${where}: ${note}`));
     if (typeof result === 'string') {
-      log.add(`${label}, fact ${i + 1}: ${result}`);
+      log.add(`${where}: ${result}`);
       continue;
     }
     result.key = uniqueKey(result.key, usedKeys);
@@ -279,18 +285,25 @@ function parseFactList(value: unknown, label: string, log: ProblemLog): unknown[
   return [];
 }
 
-/** A fact object (or a plain statement string) -> FactInput, or a problem description. */
-function toFact(rawFact: unknown): FactInput | string {
-  if (typeof rawFact === 'string') return toFact({ statement: rawFact });
+/**
+ * A fact object (or a plain statement string) -> FactInput, or a problem description when the fact is skipped.
+ * A source that is not an http(s) link (e.g. "Confluence") is dropped and reported through `note`, because the
+ * library editor refuses to save such a fact.
+ */
+function toFact(rawFact: unknown, note: (problem: string) => void): FactInput | string {
+  if (typeof rawFact === 'string') return toFact({ statement: rawFact }, note);
   if (!isRecord(rawFact)) return 'expected an object with a statement';
   const get = keyedGetter(rawFact);
   const statement = cleanMultiline(get('statement'));
   if (!statement) return 'missing statement';
+  const source = cleanLine(get('sourceurl')) || cleanLine(get('source'));
+  const sourceIsLink = isHttpUrl(source);
+  if (source && !sourceIsLink) note(`source ${quoteShort(source)} is not an http(s) link and was dropped`);
   const fact: FactInput = {
     key: cleanLine(get('key')) || defaultFactKey(statement),
     statement,
     value: cleanMultiline(get('value')),
-    sourceUrl: cleanLine(get('sourceurl')) || cleanLine(get('source')) || null,
+    sourceUrl: sourceIsLink ? source : null,
     evidenceQuote: cleanMultiline(get('evidencequote')) || null,
   };
   const status = get('status');
@@ -301,6 +314,17 @@ function toFact(rawFact: unknown): FactInput | string {
 /** Slug of the statement, e.g. "Minimum deposit is 10 USD" -> "minimum_deposit_is_10_usd". */
 function defaultFactKey(statement: string): string {
   return slugify(statement).slice(0, SLUG_MAX_LENGTH).replace(EDGE_UNDERSCORES_RE, '') || 'fact';
+}
+
+/** Same rule as the library editor: an absolute http: or https: URL. */
+function isHttpUrl(text: string): boolean {
+  if (!HTTP_PREFIX_RE.test(text)) return false;
+  try {
+    const { protocol } = new URL(text);
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 function isFactStatus(value: unknown): value is FactStatus {

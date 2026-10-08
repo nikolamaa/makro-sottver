@@ -349,3 +349,18 @@
     justify-content: flex-start;
   }
 }
+
+/* Embedding engine switch note */
+.st-switch-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.st-switch-note-warning {
+  background: var(--warning-soft);
+  color: var(--warning);
+}

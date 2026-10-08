@@ -4,38 +4,63 @@
 import { splitGreeting } from './greeting.js';
 import { capitalizeFirst, normalizeNewlines, tidyParagraphs } from './text.js';
 
+/** End of a clause: punctuation or end of sentence. */
+const CLAUSE_END = String.raw`\s*(?:[.!?,;:)]|$)`;
+
+const NEED_WORDS = '(?:other|further|more|additional)';
+const NEED_QUALIFIER = String.raw`${NEED_WORDS}\s+`;
+
+/** A generic need ("anything else", "any other questions", "further help"), not a concrete one ("any documents"). */
+const GENERIC_NEED =
+  String.raw`(?:anything\s+else\b|anything(?:\s+(?:more|further))?(?:\s+(?:i|we)\s+can\b|${CLAUSE_END})` +
+  String.raw`|(?:any\s+(?:${NEED_QUALIFIER})?|${NEED_QUALIFIER})questions?\b|questions?${CLAUSE_END}` +
+  String.raw`|(?:any\s+)?(?:${NEED_QUALIFIER})?(?:help|assistance|info(?:rmation)?|support)` +
+  String.raw`(?:\s+(?:with|regarding)\s+(?:anything(?:\s+else)?|this|that))?(?:\s+(?:at\s+all|in\s+the\s+future|later))?${CLAUSE_END}` +
+  String.raw`|any(?:\s+${NEED_WORDS})?${CLAUSE_END})`;
+
+/** "... if you have any other questions", "... should you need anything else", "... if we can help further". */
+const GENERIC_CONDITION =
+  String.raw`(?:you\s+(?:have|need|require|want)\s+${GENERIC_NEED}` +
+  String.raw`|you(?:\s+would|['’]d)\s+like\s+${GENERIC_NEED}` +
+  String.raw`|there(?:['’]s|\s+is|\s+are)\s+${GENERIC_NEED}` +
+  String.raw`|(?:i|we)\s+can\s+(?:help|assist|be\s+of\s+(?:any\s+)?(?:further\s+)?(?:help|assistance))(?:\s+(?:you\s+)?(?:with\s+)?(?:anything|any\s+other|any\s+further|further|more)\b|${CLAUSE_END}))`;
+
+/** "reach out", "contact us", "get in touch" ... - inviting a new message, not asking for something specific. */
+const CONTACT_US = String.raw`(?:reach\s+out|contact|ask|write|message|chat|drop|get\s+(?:back\s+)?in\s+touch|get\s+back|come\s+back|send\s+us\s+a\s+message|open\s+a\s+(?:new\s+)?chat|let\s+(?:me|us)\s+know)\b`;
+
 /**
  * A sentence that is a closing / sign-off when it appears at the end of a part. Anchored at sentence start so
- * "If you feel you'd like a break, just let me know ..." is NOT a closing.
+ * "If you feel you'd like a break, just let me know ..." is NOT a closing, and "let us know" / "feel free" /
+ * "should you" / "if you need" only count when generic: "Please let us know your TXID.", "Let us know if the
+ * deposit is still missing after 1 hour." and "If you need any documents, ..." carry content and are kept.
  */
 const CLOSING_SENTENCE_RE = new RegExp(
-  '^(?:and\\s+)?(?:please\\s+)?(?:do\\s+)?(?:' +
+  String.raw`^(?:and\s+)?(?:just\s+)?(?:please\s+)?(?:just\s+)?(?:do\s+)?(?:` +
     [
-      "(?:don'?t|do\\s+not)\\s+hesitate\\b",
-      'let\\s+(?:me|us)\\s+know\\b',
-      'feel\\s+free\\b',
-      'if\\s+(?:you\\s+have|there\\s+(?:are|is))\\s+any\\s+(?:(?:other|further|more|additional)\\s+)?questions?\\b',
-      "if\\s+there(?:'s|\\s+is)\\s+anything\\s+else\\b",
-      'should\\s+you\\s+(?:have|need)\\b',
-      'is\\s+there\\s+anything\\s+else\\b',
-      '(?:i\\s+|we\\s+)?hope\\s+(?:this|that)\\s+(?:helps|clarifies|clears)\\b',
-      'have\\s+a\\s+(?:great|nice|lovely|good|wonderful|fantastic|pleasant)\\s+(?:day|evening|weekend|night|afternoon|morning|week|one)\\b',
-      'enjoy\\s+(?:the\\s+rest\\s+of\\s+)?(?:your|the)\\s+(?:day|evening|weekend|games?)\\b',
-      '(?:good|best\\s+of)\\s+luck\\b',
-      '(?:kind|best|warm|warmest)\\s+regards\\b',
-      'regards\\b',
-      'cheers\\b',
-      'best\\s+wishes\\b',
-      'all\\s+the\\s+best\\b',
-      'take\\s+care\\b',
-      '(?:many\\s+)?thanks(?:\\s+again)?\\s*[.!,]*$',
+      String.raw`(?:don['’]?t|do\s+not)\s+hesitate\s+to\s+${CONTACT_US}`,
+      String.raw`let\s+(?:me|us)\s+know(?:${CLAUSE_END}|\s+(?:anytime|any\s+time)\b|\s+how\s+(?:it\s+goes|(?:i|we)\s+can\s+help)\b|\s+(?:if|whenever|in\s+case)\s+${GENERIC_CONDITION})`,
+      String.raw`feel\s+free\s+to\s+${CONTACT_US}`,
+      String.raw`(?:if|should|whenever|in\s+case)\s+${GENERIC_CONDITION}`,
+      String.raw`is\s+there\s+anything\s+else\b`,
+      String.raw`(?:i\s+|we\s+)?hope\s+(?:this|that)\s+(?:helps|clarifies|clears)\b`,
+      String.raw`have\s+a\s+(?:great|nice|lovely|good|wonderful|fantastic|pleasant)\s+(?:day|evening|weekend|night|afternoon|morning|week|one)\b`,
+      String.raw`enjoy\s+(?:the\s+rest\s+of\s+)?(?:your|the)\s+(?:day|evening|weekend|games?)\b`,
+      String.raw`(?:good|best\s+of)\s+luck\b`,
+      String.raw`(?:kind|best|warm|warmest)\s+regards\b`,
+      String.raw`regards\b`,
+      String.raw`cheers\b`,
+      String.raw`best\s+wishes\b`,
+      String.raw`all\s+the\s+best\b`,
+      String.raw`take\s+care\b`,
+      String.raw`(?:many\s+)?thanks(?:\s+again)?\s*[.!,]*$`,
     ].join('|') +
     ')',
   'i',
 );
 
 /** "Thank you for your patience." is a closing only when it is the whole final line of a part. */
-const PATIENCE_LINE_RE = /^thank(?:s|\s+you)(?:\s+(?:so|very)\s+much)?\s+for\s+your\s+(?:patience|understanding)\s*[.!]*$/i;
+const PATIENCE_LINE_RE =
+  /^thank(?:s|\s+you)(?:\s+(?:so|very)\s+much)?\s+for\s+your\s+(?:patience|understanding)(?:\s+and\s+(?:patience|understanding|cooperation))?\s*[.!]*$/i;
 
 /** Sign-off line that may be followed by a short name/team line ("Kind regards,\nStake Support"). */
 const SIGNOFF_LINE_RE = /^(?:(?:kind|best|warm|warmest)\s+)?regards,?$|^(?:cheers|thanks|many thanks|best wishes|all the best|sincerely|take care),?$/i;
@@ -54,7 +79,11 @@ const LIST_LINE_RE = /^\s*(?:[-*•]|\d{1,2}[.)])\s/;
 /** Lines shorter than this (in words) are never deduplicated across parts ("Steps:", "Thanks!"). */
 const MIN_DEDUPE_WORDS = 4;
 
+/** Links, emails, placeholders and variables other than {{user}} carry content: such a sentence is never a closing. */
+const CONTENT_MARKER_RE = /https?:\/\/|\bwww\.|\S@\S|\[ENTER |\{\{\s*(?!user\s*[|}])/i;
+
 function isClosingSentence(sentence: string): boolean {
+  if (CONTENT_MARKER_RE.test(sentence)) return false;
   return CLOSING_SENTENCE_RE.test(sentence.replace(SENTENCE_LEAD_RE, '').trim());
 }
 
@@ -83,24 +112,38 @@ function isShortNameLine(line: string): boolean {
   return words.length <= 4 && !/[.?!:]/.test(line);
 }
 
+/** Name/team lines that may follow a sign-off ("Kind regards,\nAna\nStake Support"). */
+const MAX_NAME_LINES = 2;
+
+/** Index of a sign-off line followed by 1-2 short name lines that end the body, or -1. */
+function signoffStart(lines: string[], last: number): number {
+  let i = last;
+  for (let names = 0; names < MAX_NAME_LINES && i >= 0; names++) {
+    if (!isShortNameLine(lines[i] ?? '')) return -1;
+    i = lastContentIndex(lines, i);
+    if (i >= 0 && SIGNOFF_LINE_RE.test(lines[i]?.trim() ?? '')) return i;
+  }
+  return -1;
+}
+
 /** Split a body into its content and its trailing closing block (sign-offs, "Let me know ...", "Have a great day"). */
 export function splitClosing(body: string): { body: string; closing: string } {
   const lines = body.split('\n');
   const closing: string[] = [];
   let last = lastContentIndex(lines, lines.length);
 
-  const prev = lastContentIndex(lines, last);
-  const lastLine = lines[last]?.trim() ?? '';
-  if (prev >= 0 && SIGNOFF_LINE_RE.test(lines[prev]?.trim() ?? '') && isShortNameLine(lastLine)) {
-    closing.unshift(`${lines[prev]?.trim()}\n${lastLine}`);
-    last = lastContentIndex(lines, prev);
-  } else if (PATIENCE_LINE_RE.test(lastLine)) {
-    closing.unshift(lastLine);
+  const signoff = signoffStart(lines, last);
+  if (signoff !== -1) {
+    closing.unshift(lines.slice(signoff, last + 1).map((l) => l.trim()).filter(Boolean).join('\n'));
+    last = lastContentIndex(lines, signoff);
+  } else if (PATIENCE_LINE_RE.test(lines[last]?.trim() ?? '')) {
+    closing.unshift(lines[last]?.trim() ?? '');
     last = lastContentIndex(lines, last);
   }
 
   while (last >= 0) {
     const line = lines[last] ?? '';
+    if (LIST_LINE_RE.test(line)) break; // a list step is content, even "3. Feel free to contact us."
     const cut = closingStart(line);
     if (cut === -1) break;
     closing.unshift(line.slice(cut).trim());

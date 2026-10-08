@@ -80,12 +80,21 @@ function prependSentence(sentence: string, body: string, blockSeparator: string)
   return `${sentence} ${capitalizeFirst(body)}`;
 }
 
-/** Insert a sentence right after the greeting (a greeting line like "Hi John," stays on its own line). */
+/** A greeting that ends with a comma ("Hi John,") belongs on its own line, never in front of a sentence. */
+const COMMA_GREETING_RE = /,\s*$/;
+const LEADING_SPACE_RE = /^\s+/;
+
+/**
+ * Insert a sentence right after the greeting. A greeting ending with ',' stays on (or is moved to) its own line:
+ * "Hi John, your withdrawal ..." becomes "Hi John,\n\n<sentence> Your withdrawal ...". A greeting ending with
+ * '!' may stay inline ("Hi John! <sentence> ...").
+ */
 export function insertAfterGreeting(text: string, sentence: string): string {
   const split = splitGreeting(text);
-  if (!split) return prependSentence(sentence, text.replace(/^\s+/, ''), '\n\n');
-  const separator = split.separator === ' ' || split.rest ? split.separator : '\n\n';
-  const blockSeparator = split.separator === ' ' ? '\n\n' : split.separator;
+  if (!split) return prependSentence(sentence, text.replace(LEADING_SPACE_RE, ''), '\n\n');
+  const inline = split.separator === ' ' && !COMMA_GREETING_RE.test(split.greeting);
+  const separator = inline || (split.rest && split.separator !== ' ') ? split.separator : '\n\n';
+  const blockSeparator = separator === ' ' ? '\n\n' : separator;
   return `${split.greeting}${separator}${prependSentence(sentence, split.rest, blockSeparator)}`;
 }
 

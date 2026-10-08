@@ -28,8 +28,6 @@ export interface LexicalQuery {
   display: ReadonlyMap<string, string>;
   /** Concept ids in the message (including typo-corrected words) -> the customer's words for them. */
   concepts: ReadonlyMap<string, string[]>;
-  /** Misspelled message term -> processed term of its correction ("withdrawl" -> "withdrawal"). */
-  corrections: ReadonlyMap<string, string>;
 }
 
 /** Build the lexical query for a customer message. Pure and fast (< 1 ms for typical messages). */
@@ -38,19 +36,18 @@ export function buildLexicalQuery(message: string): LexicalQuery {
   const terms: string[] = [];
   const concepts = matchConcepts(message);
   const corrected: string[] = [];
-  const corrections = new Map<string, string>();
 
   for (const token of tokenize(message)) {
     if (isNoiseToken(token)) continue;
     const term = stem(token);
+    const fixed = correctTypo(token);
     if (!display.has(term) && terms.length < MAX_MESSAGE_TERMS) {
-      display.set(term, token);
+      // A misspelled word is displayed with its corrected spelling ("withdrawl" -> "withdrawal").
+      display.set(term, fixed ?? token);
       terms.push(term);
     }
-    const fixed = correctTypo(token);
     if (!fixed) continue;
     corrected.push(fixed);
-    corrections.set(term, stem(fixed));
     for (const id of conceptsOfTerm(fixed)) {
       const words = concepts.get(id);
       if (!words) concepts.set(id, [fixed]);
@@ -71,5 +68,5 @@ export function buildLexicalQuery(message: string): LexicalQuery {
     if (NON_EXPANDING_CONCEPTS.has(id)) continue;
     for (const word of CONCEPT_EXPANSIONS.get(id) ?? []) addExpansion(word);
   }
-  return { terms, expansions, display, concepts, corrections };
+  return { terms, expansions, display, concepts };
 }

@@ -9,7 +9,7 @@ import {
   type AssistAction,
   type AssistState,
 } from './assistState';
-import { analysisFixture, draftFixture, personalizeFixture, resultFixture } from './testFixtures';
+import { analysisFixture, draftFixture, personalizeFixture, recommendationFixture, resultFixture } from './testFixtures';
 
 const MESSAGE = 'Hi, I am Marko. Where is my withdrawal? Waiting 3 days!';
 const REQUEST: PersonalizeRequest = { message: MESSAGE, macroIds: ['a'], variables: {}, mode: 'fast' };
@@ -63,6 +63,36 @@ describe('assistReducer: message and recommendations', () => {
     expect(pasted.overrides).toEqual({});
     expect(pasted.selectedIds).toEqual([]);
     expect(pasted.reply.text).toBe('');
+  });
+
+  it('keeps a still-recommended manual selection while the message is edited', () => {
+    const combined = run([{ type: 'select', ids: ['b', 'c'] }, { type: 'message', message: `${MESSAGE} pls`, fresh: false }], recommended());
+    const s = assistReducer(combined, { type: 'recommended', message: `${MESSAGE} pls`, result: resultFixture() });
+    expect(s.selectedIds).toEqual(['b', 'c']);
+    const gone = assistReducer(combined, {
+      type: 'recommended',
+      message: `${MESSAGE} pls`,
+      result: resultFixture({ recommendations: [recommendationFixture('a'), recommendationFixture('b')] }),
+    });
+    expect(gone.selectedIds).toEqual(['a']);
+    expect(gone.manualSelection).toBe(false);
+  });
+
+  it('lets an automatic selection follow the new best match', () => {
+    const s = run([
+      { type: 'message', message: `${MESSAGE} pls`, fresh: false },
+      { type: 'recommended', message: `${MESSAGE} pls`, result: resultFixture({ recommendations: [recommendationFixture('b'), recommendationFixture('a')] }) },
+    ], recommended());
+    expect(s.selectedIds).toEqual(['b']);
+  });
+
+  it('re-selects from the current result when the same text is pasted as a new conversation', () => {
+    const base = run([{ type: 'select', ids: ['c'] }, { type: 'message', message: 'typing', fresh: false }], recommended());
+    const s = assistReducer(base, { type: 'message', message: MESSAGE, fresh: true });
+    expect(s.selectedIds).toEqual(['a']);
+    expect(s.reply.text).toBe('');
+    const same = recommended();
+    expect(assistReducer(same, { type: 'message', message: MESSAGE, fresh: true })).toBe(same);
   });
 
   it('clears everything for an empty message', () => {
@@ -155,12 +185,13 @@ describe('assistReducer: reply', () => {
 });
 
 describe('personalizeKey', () => {
-  it('changes with selection, message and variables', () => {
-    const k = personalizeKey(['a'], 'm', '{}');
-    expect(personalizeKey(['a'], 'm', '{}')).toBe(k);
-    expect(personalizeKey(['a', 'b'], 'm', '{}')).not.toBe(k);
-    expect(personalizeKey(['a'], 'm2', '{}')).not.toBe(k);
-    expect(personalizeKey(['a'], 'm', '{"user":"Ana"}')).not.toBe(k);
+  it('changes with selection, macro versions, message and variables', () => {
+    const k = personalizeKey(['a'], '1', 'm', '{}');
+    expect(personalizeKey(['a'], '1', 'm', '{}')).toBe(k);
+    expect(personalizeKey(['a', 'b'], '1,1', 'm', '{}')).not.toBe(k);
+    expect(personalizeKey(['a'], '2', 'm', '{}')).not.toBe(k);
+    expect(personalizeKey(['a'], '1', 'm2', '{}')).not.toBe(k);
+    expect(personalizeKey(['a'], '1', 'm', '{"user":"Ana"}')).not.toBe(k);
   });
 });
 

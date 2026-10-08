@@ -141,7 +141,7 @@ scripts/             launch.mjs (instalacija, build, start), eval preporuka
 |---|---|---|---|
 | **Isključeno** (podrazumevano) | $0 | Preporuke i šablon rade odmah. Nema „ljudskog“ preformulisanja | Ništa ne izlazi sa računara |
 | **Claude Haiku 5.5** (preporuka) | $0,10 / 1M ulaznih i $0,50 / 1M izlaznih tokena. Jedan odgovor je ≈ 1.500 ulaznih + ≈ 400 izlaznih tokena, oko **$0,0004**. Za 150 odgovora dnevno to je oko **$1–2 mesečno** | Odličan, ~1–2 s | Šalje se samo tekst sa tokenima umesto ličnih podataka. Postoji limit mesečnog troška (podrazumevano $5) |
-| **Ollama** (lokalni model, npr. `qwen3:4b`) | $0 | Solidan. Na običnom laptopu bez GPU-a 5–20 s po odgovoru | Ništa ne izlazi sa računara |
+| **Ollama** (lokalni model, npr. `qwen2.5:3b`) | $0 | Solidan. Na običnom laptopu bez GPU-a 5–20 s po odgovoru | Ništa ne izlazi sa računara |
 
 Provera tačnosti na 2 dana šalje AI-ju samo činjenice čiji se izvor promenio. U praksi to je manje od $0,10 mesečno.
 Besplatne nivoe nekih cloud provajdera ne preporučujem za poruke kupaca, jer njihovi uslovi često dozvoljavaju

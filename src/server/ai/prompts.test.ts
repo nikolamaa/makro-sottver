@@ -138,6 +138,9 @@ describe('reply-writing prompts (personalize + draft)', () => {
     expect(system).toMatch(/responsible gambling/i);
     expect(system).toMatch(/over-apologize/);
     expect(system).toMatch(/Never invent/);
+    // Agent/detected variable values are a source, and the apology never displaces the greeting line.
+    expect(system).toMatch(/only sources are <macros> \(if present\), <facts>, <variables> \(if present\) and <customer_message>/);
+    expect(system).toMatch(/angry or frustrated: right after the greeting/);
   });
 
   it('personalize user turn carries macros, facts with status, variables, greeting and analysis', () => {

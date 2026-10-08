@@ -444,7 +444,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     anthropicModel: 'claude-haiku-5-5',
     anthropicKeySet: false,
     ollamaUrl: 'http://127.0.0.1:11434',
-    ollamaModel: 'qwen3:4b',
+    ollamaModel: 'qwen2.5:3b',
     effort: 'low',
     autoPolish: false,
     monthlyBudgetUsd: 5,

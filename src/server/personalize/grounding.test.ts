@@ -83,6 +83,15 @@ describe('checkGrounding - numbers', () => {
     expect(kinds('Your 250 USDT deposit is on its way.', src)).toEqual([]);
   });
 
+  it('flags an invented amount stitched from an unrelated macro number and currency', () => {
+    // "$" comes from "$10" and "100" from "100 free spins": neither makes "$100" a sourced amount.
+    const src = sources({ macroBodies: ['Minimum deposit is $10. You get 100 free spins.'], message: 'Where is my bonus?', variables: {} });
+    expect(kinds('We added a $100 bonus to your account.', src)).toEqual([['unsupported_number', '$100']]);
+    // The AI guessing the currency of the customer's bare number is flagged too.
+    const guessed = sources({ macroBodies: ['We support USDT on TRC20.'], message: 'I deposited 250 yesterday', variables: {} });
+    expect(kinds('Your 250 USDT deposit is on its way.', guessed)).toEqual([['unsupported_number', '250 USDT']]);
+  });
+
   it('checks values rendered from macro variables', () => {
     const src = sources({ macroBodies: ['It will arrive within {{eta_time}} hours.'], variables: { eta_time: '12' } });
     expect(kinds('It will arrive within 12 hours.', src)).toEqual([]);
@@ -179,6 +188,39 @@ describe('checkGrounding - promises', () => {
   it('does not flag promise wording that the sources already use', () => {
     const src = sources({ macroBodies: ['Provably fair games guarantee every result can be verified. Failed deposits will be refunded automatically.'] });
     expect(kinds('Our provably fair games guarantee verifiable results. A failed deposit will be refunded automatically.', src)).toEqual([]);
+  });
+
+  it("never lets the customer's own words license a promise", () => {
+    const src = sources({ message: 'Can you guarantee I get it today? Is it 100% safe? Will you refund you me?' });
+    expect(kinds('I guarantee you will get it today, it is 100% safe and we will refund you.', src)).toEqual([
+      ['promise', 'guarantee'],
+      ['promise', '100%'],
+      ['promise', 'will refund you'],
+    ]);
+  });
+
+  it('does not flag negated promise phrases', () => {
+    for (const reply of [
+      "We can't guarantee a specific time.",
+      'There is no guarantee of an exact arrival time.',
+      'We cannot promise that, sorry.',
+      "I'm not 100% sure yet, so I asked the team.",
+      "Unfortunately we won't be able to refund you.",
+      'We are not able to compensate you for market changes.',
+    ]) {
+      expect(kinds(reply), reply).toEqual([]);
+    }
+    expect(kinds('Not sure why, but we guarantee it.')).toEqual([['promise', 'guarantee']]);
+    // The 40-char look-back window starts inside "casino": its "no" tail must not count as a negation.
+    const cut = `Our casino ${'x'.repeat(36)} guarantee`;
+    expect(cut.indexOf('guarantee') - 'Our casi'.length).toBe(40);
+    expect(kinds(cut)).toEqual([['promise', 'guarantee']]);
+  });
+
+  it('a negated phrase in the macro does not license the affirmed promise', () => {
+    const src = sources({ macroBodies: ['We cannot guarantee exact arrival times.'] });
+    expect(kinds('We cannot guarantee exact arrival times.', src)).toEqual([]);
+    expect(kinds('We guarantee it arrives today.', src)).toEqual([['promise', 'guarantee']]);
   });
 
   it('reports 100% only once (as a promise, not also as a number)', () => {

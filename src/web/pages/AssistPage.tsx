@@ -24,7 +24,7 @@ export function AssistPage() {
   const aiReady = useStore((s) => s.health?.ai.ready ?? false);
   const aiDetail = useStore((s) => s.health?.ai.detail ?? '');
   const userFallback = useStore((s) => s.settings?.personalization.userFallback ?? 'there');
-  useAssistHotkeys(actions, pageRef, state.result?.recommendations.length ?? 0);
+  useAssistHotkeys(actions, { page: pageRef, message: messageRef }, state.result?.recommendations.length ?? 0);
 
   const macroById = useMemo(() => new Map<Id, Macro>(macros.map((m) => [m.id, m])), [macros]);
   const categoryById = useMemo(() => new Map<Id, Category>(categories.map((c) => [c.id, c])), [categories]);

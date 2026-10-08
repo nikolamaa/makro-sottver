@@ -7,7 +7,8 @@
  */
 import type { Entity, EntityType } from '../../shared/types.js';
 import { CRYPTO_ALIASES, FIAT_ALIASES, NETWORK_ALIASES, normalizeForMatch, VIP_RANKS } from '../domain/igaming.js';
-import { buildAlternation, escapeRegExp, isMostlyCaps, phraseSource, STOPWORDS } from './text.js';
+import { buildAlternation, collapseWhitespace, escapeRegExp, isMostlyCaps, phraseSource, STOPWORDS } from './text.js';
+import { BONUS_NAMES, DOCUMENT_TYPES, GAME_NAMES, PROVIDER_NAMES } from './vocabulary.js';
 
 interface Candidate {
   type: EntityType;
@@ -58,8 +59,13 @@ function groupSpan(m: RegExpMatchArray, g: number): [number, number] | null {
   return span ? [span[0], span[1]] : null;
 }
 
-function capitalizedInText(ctx: Ctx, raw: string): boolean {
-  return !ctx.mostlyCaps && /^\p{Lu}/u.test(raw);
+const UPPER_START_RE = /^\p{Lu}/u;
+const SENTENCE_START_RE = /(?:^|[.!?\n])\s*$/;
+
+/** Capitalized in the middle of a sentence (a capital at sentence start or in an all-caps message says nothing). */
+function capitalizedMidSentence(ctx: Ctx, raw: string, start: number): boolean {
+  if (ctx.mostlyCaps || !UPPER_START_RE.test(raw)) return false;
+  return !SENTENCE_START_RE.test(ctx.text.slice(Math.max(0, start - 8), start));
 }
 
 // ---------------------------------------------------------------------------
@@ -198,9 +204,9 @@ const NUM_SRC = String.raw`(?:\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d{1,3}(?:\.\d{3})+,\
 const SYMBOL_AMOUNT_RE = new RegExp(`(?<![a-z0-9])(${SYMBOL_SRC})\\s?(${NUM_SRC})(?![\\w])`, 'gid');
 const AMOUNT_SYMBOL_RE = new RegExp(`(?<![\\w.,])(${NUM_SRC})\\s?([$€£₹¥₺₦₩])`, 'gid');
 const AMOUNT_CODE_RE = new RegExp(`(?<![\\w.,])(${NUM_SRC})\\s?(${CODE_SRC})(?![a-z0-9])`, 'gid');
-const CODE_AMOUNT_RE = new RegExp(`\\b(${SAFE_CODE_SRC})\\s?(${NUM_SRC})(?![\\w.,]?\\d)(?!\\w)`, 'gid');
+const CODE_AMOUNT_RE = new RegExp(`\\b(${SAFE_CODE_SRC})\\s?(${NUM_SRC})(?!\\w|[.,]\\d)`, 'gid');
 const VERB_AMOUNT_RE = new RegExp(
-  String.raw`\b(?:deposit(?:ed)?|withdr(?:aw|ew|awn)|cash(?:ed)?\s?out|sent|send|paid|transferred|won|lost|wagered|balance(?:\s+(?:of|is|was))?|amount(?:\s+(?:of|is|was))?)\s+(?:of\s+|about\s+|around\s+|like\s+|~)?(${NUM_SRC})(?![\w.,%]|\s*(?:x|times|days?|hours?|hrs?|h|mins?|minutes?|weeks?|months?|years?|%)\b)`,
+  String.raw`\b(?:deposit(?:ed)?|withdr(?:aw|ew|awn)|cash(?:ed)?\s?out|sent|send|paid|transferred|won|lost|wagered|put|placed|staked|bet|balance(?:\s+(?:of|is|was))?|amount(?:\s+(?:of|is|was))?)\s+(?:of\s+|about\s+|around\s+|like\s+|~)?(${NUM_SRC})(?![\w.,%:/-]|\s*(?:x|times|days?|hours?|hrs?|h|mins?|minutes?|weeks?|months?|years?|%)\b)`,
   'gid',
 );
 const CODE_WORD_RE = new RegExp(`\\b(${CODE_SRC})\\b`, 'gi');
@@ -210,33 +216,37 @@ const AMBIGUOUS_BEFORE_RE =
 
 const THOUSANDS_COMMA_RE = /^\d{1,3}(?:,\d{3})+$/;
 const THOUSANDS_DOT_RE = /^\d{1,3}(?:\.\d{3}){2,}$/;
+const K_SUFFIX_RE = /k$/i;
+const SPACE_G_RE = /\s+/g;
+const DOT_G_RE = /\./g;
+const COMMA_G_RE = /,/g;
 
 /**
  * Normalize a written amount: thousand separators removed, decimal comma -> dot, "k" suffix expanded.
  * "1,000.50" -> "1000.50", "1.000,50" -> "1000.50", "0,05" -> "0.05", "2.5k" -> "2500".
  */
 export function normalizeNumber(raw: string): string {
-  let s = raw.replace(/\s+/g, '');
+  let s = raw.replace(SPACE_G_RE, '');
   let multiplier = 1;
-  if (/k$/i.test(s)) {
+  if (K_SUFFIX_RE.test(s)) {
     multiplier = 1000;
     s = s.slice(0, -1);
   }
   const lastComma = s.lastIndexOf(',');
   const lastDot = s.lastIndexOf('.');
   if (lastComma >= 0 && lastDot >= 0) {
-    s = lastComma > lastDot ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
+    s = lastComma > lastDot ? s.replace(DOT_G_RE, '').replace(',', '.') : s.replace(COMMA_G_RE, '');
   } else if (lastComma >= 0) {
-    s = THOUSANDS_COMMA_RE.test(s) ? s.replace(/,/g, '') : s.replace(',', '.');
+    s = THOUSANDS_COMMA_RE.test(s) ? s.replace(COMMA_G_RE, '') : s.replace(',', '.');
   } else if (THOUSANDS_DOT_RE.test(s)) {
-    s = s.replace(/\./g, '');
+    s = s.replace(DOT_G_RE, '');
   }
   if (multiplier === 1) return s;
   return String(Math.round(Number(s) * multiplier * 1e8) / 1e8);
 }
 
 function addMoneyCode(ctx: Ctx, code: string, start: number, end: number): void {
-  const info = CODES.get(code.toLowerCase().replace(/\s+/g, ' '));
+  const info = CODES.get(collapseWhitespace(code.toLowerCase()));
   if (info) add(ctx, info.type, info.value, start, end);
 }
 
@@ -330,7 +340,7 @@ function extractNetworks(ctx: Ctx): void {
   for (const m of ctx.text.matchAll(NETWORK_CONTEXT_RE)) {
     const g = m[1] !== undefined ? 1 : 2;
     const span = groupSpan(m, g);
-    const value = NETWORK_VALUES[(m[g] ?? '').toLowerCase().replace(/\s+/g, ' ')];
+    const value = NETWORK_VALUES[collapseWhitespace((m[g] ?? '').toLowerCase())];
     if (span && value) add(ctx, 'network', value, span[0], span[1], CONTEXT_NETWORK_PRIORITY);
   }
 }
@@ -343,12 +353,13 @@ const VIP_SET = new Map<string, string>(VIP_RANKS.map((r) => [r.toLowerCase(), r
 const VIP_RE = /\b(platinum|diamond|obsidian|opal|bronze|silver|gold)\b(?:[ \t]+(vi|iv|v|iii|ii|i|[1-6])(?![\w'’]))?/gid;
 const VIP_CONTEXT_RE = /\b(?:vip|rank|ranks|ranked|tier|level|levels|status|loyalty|host|reached|promoted|upgrade|upgraded|downgraded|progress)\b/;
 const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI'];
+const SINGLE_DIGIT_RE = /^\d$/;
 const AFTER_NUMERAL_I_RE = /^(?:\s*$|\s*[.,!?;:)]|\s+(?:vip|rank|level|tier|status|member|player|user)\b)/i;
 
 function vipNumeral(m: RegExpMatchArray, text: string): string | null {
   const numeral = m[2];
   if (!numeral) return null;
-  if (/^\d$/.test(numeral)) return ROMAN[Number(numeral)] ?? null;
+  if (SINGLE_DIGIT_RE.test(numeral)) return ROMAN[Number(numeral)] ?? null;
   if (numeral.toLowerCase() === 'i') {
     const end = groupSpan(m, 2)?.[1] ?? 0;
     return numeral === 'I' && AFTER_NUMERAL_I_RE.test(text.slice(end, end + 12)) ? 'I' : null;
@@ -370,147 +381,18 @@ function extractVipRanks(ctx: Ctx): void {
       continue;
     }
     vipContext ??= VIP_CONTEXT_RE.test(ctx.norm);
-    if (vipContext || capitalizedInText(ctx, m[1] ?? '')) add(ctx, 'vip_rank', base, rankSpan[0], rankSpan[1]);
+    if (vipContext || capitalizedMidSentence(ctx, m[1] ?? '', rankSpan[0])) add(ctx, 'vip_rank', base, rankSpan[0], rankSpan[1]);
   }
 }
 
-const BONUS = buildAlternation(
-  [
-    [String.raw`monthly\s+subscription\s+bonus(?:es)?`, 'Monthly Subscription Bonus'],
-    [String.raw`pre[-\s]?monthly(?:\s+bonus(?:es)?)?`, 'Pre-Monthly Bonus'],
-    [String.raw`post[-\s]?monthly(?:\s+bonus(?:es)?)?`, 'Post-Monthly Bonus'],
-    [String.raw`monthly\s+bonus(?:es)?`, 'Monthly Bonus'],
-    [String.raw`weekly\s+(?:bonus(?:es)?|boosts?)`, 'Weekly Bonus'],
-    [String.raw`level[-\s]?up\s+bonus(?:es)?`, 'Level-Up Bonus'],
-    [String.raw`(?:birthday|b-?day)\s+(?:bonus|gift|reward|present)`, 'Birthday Bonus'],
-    [String.raw`welcome\s+(?:offer|package)`, 'Welcome Offer'],
-    [String.raw`welcome\s+bonus|sign[-\s]?up\s+bonus`, 'Welcome Bonus'],
-    [String.raw`bonus\s+drops?|drop\s+codes?`, 'Bonus Drop'],
-    [String.raw`rake[-\s]?back`, 'Rakeback'],
-    [String.raw`(?:daily\s+|hourly\s+)?reloads?(?!\s+(?:the\s+|my\s+|this\s+)?(?:page|site|website|browser|app|game|tab)\b)`, 'Reload'],
-  ],
-  'gi',
-);
-
-const DOCUMENT = buildAlternation(
-  [
-    [String.raw`proof\s+of\s+address`, 'proof of address'],
-    [String.raw`proof\s+of\s+(?:identity|id)`, 'proof of identity'],
-    [String.raw`proof\s+of\s+income`, 'proof of income'],
-    [String.raw`source\s+of\s+(?:funds|wealth)`, 'source of funds'],
-    [String.raw`driv(?:er['’]?s?|ing)\s+licen[cs]e`, "driver's license"],
-    [String.raw`national\s+id(?:\s+card)?`, 'national ID'],
-    [String.raw`(?:id|identity|identification)\s+card`, 'ID card'],
-    [String.raw`passports?`, 'passport'],
-    [String.raw`utility\s+bills?`, 'utility bill'],
-    [String.raw`bank\s+statements?`, 'bank statement'],
-    [String.raw`selfies?`, 'selfie'],
-    [String.raw`residence\s+permit`, 'residence permit'],
-  ],
-  'gi',
-);
-
-/** Games: [regex source, display name, ambiguous (common English word)]. Longer names first. */
-const GAMES: readonly (readonly [string, string, boolean])[] = [
-  [String.raw`gates\s+of\s+olympus`, 'Gates of Olympus', false],
-  [String.raw`sweet\s+bonanza`, 'Sweet Bonanza', false],
-  [String.raw`big\s+bass\s+bonanza`, 'Big Bass Bonanza', false],
-  [String.raw`sugar\s+rush`, 'Sugar Rush', false],
-  [String.raw`the\s+dog\s+house`, 'The Dog House', false],
-  [String.raw`wanted\s+dead\s+or\s+a\s+wild`, 'Wanted Dead or a Wild', false],
-  [String.raw`starlight\s+princess`, 'Starlight Princess', false],
-  [String.raw`rock\s+paper\s+scissors`, 'Rock Paper Scissors', false],
-  [String.raw`lightning\s+roulette`, 'Lightning Roulette', false],
-  [String.raw`dragon\s+tower`, 'Dragon Tower', false],
-  [String.raw`dragon\s+tiger`, 'Dragon Tiger', false],
-  [String.raw`video\s+poker`, 'Video Poker', false],
-  [String.raw`blue\s+samurai`, 'Blue Samurai', false],
-  [String.raw`scarab\s+spin`, 'Scarab Spin', false],
-  [String.raw`tome\s+of\s+life`, 'Tome of Life', false],
-  [String.raw`crazy\s+time`, 'Crazy Time', false],
-  [String.raw`monopoly\s+live`, 'Monopoly Live', false],
-  [String.raw`andar\s+bahar`, 'Andar Bahar', false],
-  [String.raw`teen\s+patti`, 'Teen Patti', false],
-  [String.raw`(?:texas\s+)?hold\s?['’]?em`, "Texas Hold'em", false],
-  [String.raw`sic\s?bo`, 'Sic Bo', false],
-  [String.raw`plinko`, 'Plinko', false],
-  [String.raw`hi-?lo`, 'Hilo', false],
-  [String.raw`keno`, 'Keno', false],
-  [String.raw`blackjack`, 'Blackjack', false],
-  [String.raw`baccarat`, 'Baccarat', false],
-  [String.raw`roulette`, 'Roulette', false],
-  [String.raw`craps`, 'Craps', false],
-  [String.raw`poker`, 'Poker', false],
-  [String.raw`crash`, 'Crash', true],
-  [String.raw`dice`, 'Dice', true],
-  [String.raw`limbo`, 'Limbo', true],
-  [String.raw`mines`, 'Mines', true],
-  [String.raw`wheel`, 'Wheel', true],
-  [String.raw`diamonds`, 'Diamonds', true],
-  [String.raw`slide`, 'Slide', true],
-  [String.raw`pump`, 'Pump', true],
-  [String.raw`flip`, 'Flip', true],
-  [String.raw`snakes`, 'Snakes', true],
-  [String.raw`cases`, 'Cases', true],
-  [String.raw`darts`, 'Darts', true],
-  [String.raw`bars`, 'Bars', true],
-  [String.raw`tarot`, 'Tarot', true],
-  [String.raw`chicken`, 'Chicken', true],
-];
-const GAME = buildAlternation(
-  GAMES.map(([src, name, ambiguous]) => [src, { name, ambiguous }] as const),
-  'gi',
-);
 const GAME_AFTER_RE = /^\s+(?:game|games|original|originals|round|bet|bets)\b/i;
 const GAME_BEFORE_RE = /\b(?:play|playing|played|stake)\s+(?:on\s+|the\s+)?$/i;
 
-const PROVIDERS: readonly (readonly [string, string])[] = [
-  [String.raw`pragmatic(?:\s+play)?(?:\s+live)?`, 'Pragmatic Play'],
-  [String.raw`evolution(?:\s+gaming)?`, 'Evolution'],
-  [String.raw`hacksaw(?:\s+gaming)?`, 'Hacksaw Gaming'],
-  [String.raw`no\s?limit\s+city|nolimit(?:\s+city)?`, 'Nolimit City'],
-  [String.raw`play['’]?\s?n['’]?\s?go|playngo`, "Play'n GO"],
-  [String.raw`push\s+gaming`, 'Push Gaming'],
-  [String.raw`relax\s+gaming`, 'Relax Gaming'],
-  [String.raw`net\s?ent`, 'NetEnt'],
-  [String.raw`red\s+tiger(?:\s+gaming)?`, 'Red Tiger'],
-  [String.raw`bgaming`, 'BGaming'],
-  [String.raw`spribe`, 'Spribe'],
-  [String.raw`thunderkick`, 'Thunderkick'],
-  [String.raw`quickspin`, 'Quickspin'],
-  [String.raw`elk\s+studios`, 'ELK Studios'],
-  [String.raw`big\s+time\s+gaming`, 'Big Time Gaming'],
-  [String.raw`yggdrasil`, 'Yggdrasil'],
-  [String.raw`playtech`, 'Playtech'],
-  [String.raw`microgaming`, 'Microgaming'],
-  [String.raw`avatar\s?ux`, 'AvatarUX'],
-  [String.raw`endorphina`, 'Endorphina'],
-  [String.raw`wazdan`, 'Wazdan'],
-  [String.raw`habanero`, 'Habanero'],
-  [String.raw`booming\s+games`, 'Booming Games'],
-  [String.raw`3\s?oaks(?:\s+gaming)?`, '3 Oaks Gaming'],
-  [String.raw`massive\s+studios`, 'Massive Studios'],
-  [String.raw`twist\s+gaming`, 'Twist Gaming'],
-  [String.raw`print\s+studios`, 'Print Studios'],
-  [String.raw`backseat\s+gaming`, 'Backseat Gaming'],
-  [String.raw`titan\s+gaming`, 'Titan Gaming'],
-  [String.raw`octoplay`, 'Octoplay'],
-  [String.raw`peter\s*(?:&|and)\s*sons`, 'Peter & Sons'],
-  [String.raw`slotmill`, 'Slotmill'],
-  [String.raw`playson`, 'Playson'],
-  [String.raw`ezugi`, 'Ezugi'],
-];
-const PROVIDER = buildAlternation(PROVIDERS, 'gi');
-
-/** Non-global tests used by intent scoring (named provider or unambiguous game). */
-export const PROVIDER_TEST_RE = new RegExp(PROVIDER.re.source, 'i');
-export const GAME_TEST_RE = new RegExp(`\\b(?:${GAMES.filter(([, , a]) => !a).map(([src]) => src).join('|')})\\b`, 'i');
-
 function extractVocabulary(ctx: Ctx): void {
   for (const [alt, type] of [
-    [BONUS, 'bonus_name'],
-    [DOCUMENT, 'document_type'],
-    [PROVIDER, 'provider'],
+    [BONUS_NAMES, 'bonus_name'],
+    [DOCUMENT_TYPES, 'document_type'],
+    [PROVIDER_NAMES, 'provider'],
   ] as const) {
     for (const m of ctx.text.matchAll(alt.re)) {
       const start = m.index ?? 0;
@@ -518,10 +400,10 @@ function extractVocabulary(ctx: Ctx): void {
       if (value) add(ctx, type, value, start, start + m[0].length);
     }
   }
-  for (const m of ctx.text.matchAll(GAME.re)) {
+  for (const m of ctx.text.matchAll(GAME_NAMES.re)) {
     const start = m.index ?? 0;
     const end = start + m[0].length;
-    const game = GAME.valueOf(m);
+    const game = GAME_NAMES.valueOf(m);
     if (!game) continue;
     if (game.ambiguous && !gameInContext(ctx, m[0], start, end)) continue;
     add(ctx, 'game', game.name, start, end);
@@ -530,7 +412,7 @@ function extractVocabulary(ctx: Ctx): void {
 
 function gameInContext(ctx: Ctx, raw: string, start: number, end: number): boolean {
   return (
-    capitalizedInText(ctx, raw) ||
+    capitalizedMidSentence(ctx, raw, start) ||
     GAME_AFTER_RE.test(ctx.text.slice(end, end + 12)) ||
     GAME_BEFORE_RE.test(ctx.text.slice(Math.max(0, start - 16), start))
   );
@@ -570,6 +452,7 @@ const NUMBER_WORDS: Record<string, number> = {
   'a couple of': 2,
 };
 const VAGUE_COUNTS: Record<string, number> = { few: 3, 'a few': 3, several: 4, many: 5 };
+const LEADING_ARTICLE_RE = /^a /;
 const UNIT_PREFIXES: readonly (readonly [string, string, number])[] = [
   ['sec', 'second', 1 / 3600],
   ['min', 'minute', 1 / 60],
@@ -588,8 +471,8 @@ function canonicalUnit(raw: string): readonly [string, string, number] | undefin
 function durationValue(countRaw: string, unitRaw: string): string | null {
   const unit = canonicalUnit(unitRaw);
   if (!unit) return null;
-  const word = countRaw.toLowerCase().replace(/\s+/g, ' ');
-  if (VAGUE_COUNTS[word] !== undefined) return `${word.replace(/^a /, '')} ${unit[1]}s`;
+  const word = collapseWhitespace(countRaw.toLowerCase());
+  if (VAGUE_COUNTS[word] !== undefined) return `${word.replace(LEADING_ARTICLE_RE, '')} ${unit[1]}s`;
   const n = NUMBER_WORDS[word] ?? Number(word.replace(',', '.'));
   if (!Number.isFinite(n)) return null;
   return `${n} ${unit[1]}${n === 1 ? '' : 's'}`;
@@ -629,7 +512,7 @@ function extractTime(ctx: Ctx): void {
   for (const re of DATE_RES) {
     for (const m of ctx.text.matchAll(re)) {
       const start = m.index ?? 0;
-      add(ctx, 'date', m[0].replace(/\s+/g, ' '), start, start + m[0].length);
+      add(ctx, 'date', collapseWhitespace(m[0]), start, start + m[0].length);
     }
   }
   for (const m of ctx.text.matchAll(NUMERIC_DATE_RE)) {
@@ -648,12 +531,17 @@ function extractTime(ctx: Ctx): void {
 const USERNAME_RE =
   /\b(?:my\s+)?(?:stake\s+)?(?:user\s?name|user\s?id|nick\s?name|handle)\b(\s+(?:is|was)\s+|\s*[:=–-]\s*|\s+)["'“]?(@?[a-z0-9][a-z0-9_.-]{1,31})/gid;
 const ACCOUNT_HANDLE_RE = /\b(?:my\s+)?(?:stake\s+)?account(?:\s+name)?\b(\s+is\s+|\s*[:=]\s*|\s+)(@?[a-z0-9][a-z0-9_.-]{2,31})/gid;
+const TRAILING_DOTS_DASHES_RE = /[.-]+$/;
+const LETTER_RE = /[a-z]/i;
+const DIGIT_OR_UNDERSCORE_RE = /[\d_]/;
+const CAMEL_CASE_RE = /[a-z][A-Z]/;
+const INNER_DOT_RE = /.\../;
 const NOT_A_HANDLE = new Set(['changed', 'change', 'reset', 'password', 'email', 'login', 'locked', 'blocked', 'banned', 'and', 'or', 'not', 'please']);
 
 function isHandleLike(token: string): boolean {
   if (token.startsWith('@')) return true;
-  const hasLetter = /[a-z]/i.test(token);
-  return (hasLetter && /[\d_]/.test(token)) || /[a-z][A-Z]/.test(token) || (hasLetter && /.\../.test(token));
+  const hasLetter = LETTER_RE.test(token);
+  return (hasLetter && DIGIT_OR_UNDERSCORE_RE.test(token)) || CAMEL_CASE_RE.test(token) || (hasLetter && INNER_DOT_RE.test(token));
 }
 
 function extractUsernames(ctx: Ctx): void {
@@ -664,7 +552,7 @@ function extractUsernames(ctx: Ctx): void {
     for (const m of ctx.text.matchAll(re)) {
       const span = groupSpan(m, 2);
       if (!span) continue;
-      let token = (m[2] ?? '').replace(/[.\-]+$/, '');
+      let token = (m[2] ?? '').replace(TRAILING_DOTS_DASHES_RE, '');
       const hasSeparator = (m[1] ?? '').trim() !== '';
       const lower = token.toLowerCase();
       const accepted = explicit
@@ -691,12 +579,13 @@ const NOT_A_NAME = new Set(
     .filter(Boolean),
 );
 const NAME_TOKEN_RE = /^\p{Lu}[\p{L}'’-]*$/u;
+const BLANKS_RE = /[ \t]+/;
 const HAS_LOWER_RE = /\p{Ll}/u;
 
 /** Leading capitalized, non-stoplisted tokens of a captured phrase (max 3), or null. */
 function leadingName(phrase: string): string | null {
   const names: string[] = [];
-  for (const token of phrase.split(/[ \t]+/)) {
+  for (const token of phrase.split(BLANKS_RE)) {
     if (!NAME_TOKEN_RE.test(token) || !HAS_LOWER_RE.test(token)) break;
     const lower = token.toLowerCase();
     if (NOT_A_NAME.has(lower) || STOPWORDS.has(lower)) break;

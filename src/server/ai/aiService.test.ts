@@ -7,7 +7,8 @@ import { AiService } from './aiService.js';
 import { AiError, type JsonRequest, type LlmProvider, type LlmPurpose } from './provider.js';
 
 vi.mock('../personalize/personalize.js', () => ({
-  // Simple fake: replaces email/name entities (and known values found in the text) with numbered tokens.
+  // Simple fake: replaces email/name entities (and known user/email/username values found in the text) with
+  // numbered tokens. Like the real one, it ignores custom variable names; the service must tokenize those itself.
   pseudonymize: vi.fn((text: string, entities: { type: string; raw: string }[], known: Record<string, string> = {}) => {
     const mapping: Record<string, string> = {};
     let out = text;
@@ -18,7 +19,8 @@ vi.mock('../personalize/personalize.js', () => ({
       mapping[token] = e.raw;
       out = out.split(e.raw).join(token);
     }
-    for (const value of Object.values(known)) {
+    for (const [key, value] of Object.entries(known)) {
+      if (!['user', 'email', 'username'].includes(key)) continue;
       if (Object.values(mapping).includes(value) || !out.includes(value)) continue;
       const token = `⟦KNOWN_${++n}⟧`;
       mapping[token] = value;
@@ -196,6 +198,23 @@ describe('availability', () => {
     expect(local.service.isReady()).toBe(true);
   });
 
+  it('treats Ollama on another computer as cloud for strict local and pseudonymization, but never as paid', async () => {
+    const remote: FakeProvider = { ...fakeProvider({ isCloud: true, answer: () => personalizeAnswer }), id: 'ollama', model: 'qwen3:4b' };
+    const ollama = settingsWith({ ai: { provider: 'ollama', monthlyBudgetUsd: 5 } });
+
+    const strict = serviceWith(remote, { ...ollama, privacy: { ...ollama.privacy, strictLocal: true } });
+    expect(strict.service.status()).toMatchObject({ ready: false, detail: expect.stringMatching(/Ollama URL points to another computer/) });
+    await expect(strict.service.personalize(personalizeInput())).rejects.toMatchObject({ code: 'strict_local' });
+
+    // Budget already spent on Claude does not block a free provider.
+    const { service } = serviceWith(remote, ollama, 99);
+    expect(service.status()).toEqual({ provider: 'ollama', ready: true, detail: 'Ollama (qwen3:4b) on another computer, personal data pseudonymized' });
+    await service.personalize(personalizeInput());
+    const req = remote.requests[0]!;
+    expect(req.user).not.toContain('john@example.com');
+    expect(req.timeoutMs).toBeGreaterThan(30_000);
+  });
+
   it('status and test describe a ready provider', async () => {
     const { service } = serviceWith(fakeProvider({}));
     expect(service.status()).toEqual({ provider: 'anthropic', ready: true, detail: 'Claude (claude-haiku-5-5), personal data pseudonymized' });
@@ -323,6 +342,30 @@ describe('personalize', () => {
     });
     expect(res.warnings.some((w) => /Responsible gambling/.test(w))).toBe(true);
     expect(res.warnings.some((w) => /could not restore/.test(w))).toBe(true);
+  });
+
+  it('masks custom personal variables as whole words only, without garbling other words', async () => {
+    const provider = fakeProvider({ answer: () => personalizeAnswer });
+    const message = 'Max here. What is the Maximum withdrawal? My wallet is bc1qxy9 and txid 0xabc123.';
+    const variables = { player_name: 'Max', wallet: 'bc1qxy9', txid: '0xabc123', amount: '250', note: 'Max asked twice', constructor: 'x' };
+    await serviceWith(provider).service.personalize({ message, analysis: { ...analysis, entities: [], questions: [] }, macros: [macro('m1')], variables });
+
+    const user = provider.requests[0]!.user;
+    expect(user).toContain('⟦PLAYER_NAME_1⟧ here. What is the Maximum withdrawal? My wallet is ⟦WALLET_1⟧ and txid ⟦TXID_1⟧.');
+    expect(user).toContain('note: ⟦PLAYER_NAME_1⟧ asked twice');
+    expect(user).toContain('amount: 250');
+    expect(user).toContain('constructor: x');
+    for (const secret of ['bc1qxy9', '0xabc123', 'Max ']) expect(user).not.toContain(secret);
+  });
+
+  it('fills {{variables}} the model left in the reply', async () => {
+    const answer = { ...personalizeAnswer, reply: 'Hi {{user}},\n\nYour {{amount}} {{currency|funds}} arrive in {{eta_time}}. {{bonus_code|No code needed}}.' };
+    const res = await serviceWith(fakeProvider({ answer: () => answer })).service.personalize({
+      ...personalizeInput(),
+      variables: { amount: '250', currency: 'USDT' },
+    });
+    expect(res.text).toBe('Hi there,\n\nYour 250 USDT arrive in [ENTER ETA TIME]. No code needed.');
+    expect(res.placeholders).toEqual([{ label: '[ENTER ETA TIME]', variable: 'eta_time' }]);
   });
 
   it('records usage on success and on billed failures, and rethrows errors', async () => {
