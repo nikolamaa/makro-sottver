@@ -8,7 +8,7 @@ describe('convertIntercomVariables', () => {
     ['{{ first_name | fallback: "there" }}', '{{user|there}}'],
     ['{{first_name|fallback:"there"}}', '{{user|there}}'],
     ["{{first_name | fallback: 'friend'}}", '{{user|friend}}'],
-    ['{{first_name | fallback: “there”}}', '{{user|there}}'],
+    ['{{first_name | fallback: \u201Cthere\u201D}}', '{{user|there}}'],
     ['{{first_name | fallback: there}}', '{{user|there}}'],
     ['{{First Name}}', '{{user}}'],
     ['{{name}}', '{{user}}'],

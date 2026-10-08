@@ -156,7 +156,8 @@ function AnthropicSettings({
   const ai = settings.ai;
   const [keyDraft, setKeyDraft] = useState('');
   const [busy, setBusy] = useState<'save' | 'remove' | null>(null);
-  const known = ANTHROPIC_MODELS.some((m) => m.id === ai.anthropicModel);
+  const model = ANTHROPIC_MODELS.find((m) => m.id === ai.anthropicModel);
+  const known = model !== undefined;
 
   const saveKey = async (e: FormEvent) => {
     e.preventDefault();
@@ -238,11 +239,30 @@ function AnthropicSettings({
         </div>
       </SettingRow>
 
-      <SettingRow label="Model" htmlFor="st-anthropic-model" hint="Price per million tokens (input / output). Haiku is plenty for support replies.">
-        <select id="st-anthropic-model" value={ai.anthropicModel} onChange={(e) => update({ ai: { anthropicModel: e.target.value } })}>
+      <SettingRow
+        label="Model"
+        htmlFor="st-anthropic-model"
+        wide
+        hint={
+          known ? (
+            <>
+              {price(model.inPrice)} input / {price(model.outPrice)} output per million tokens - about {formatUsd(perReplyUsd(model))} per
+              reply. Haiku is plenty for support replies.
+            </>
+          ) : (
+            'Custom model ID set outside this list.'
+          )
+        }
+      >
+        <select
+          id="st-anthropic-model"
+          className="st-model-select"
+          value={ai.anthropicModel}
+          onChange={(e) => update({ ai: { anthropicModel: e.target.value } })}
+        >
           {ANTHROPIC_MODELS.map((m) => (
             <option key={m.id} value={m.id}>
-              {m.label} - {m.note} ({price(m.inPrice)} / {price(m.outPrice)})
+              {m.label} - {m.note} ({price(m.inPrice)} / {price(m.outPrice)} per MTok)
             </option>
           ))}
           {!known ? <option value={ai.anthropicModel}>{ai.anthropicModel} (custom)</option> : null}

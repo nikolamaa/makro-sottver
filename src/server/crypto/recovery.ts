@@ -47,7 +47,11 @@ const NONCE_LEN = 12;
 const TAG_LEN = 16;
 const AAD = Buffer.from('macropilot-recovery-v1', 'utf8');
 
-const SEPARATORS_RE = /[\s-]+/g;
+/**
+ * Whitespace, any dash (hyphen, en/em dash, non-breaking hyphen, minus sign) and invisible format characters
+ * (zero-width space, soft hyphen, BOM) - word processors and chat apps substitute these when the key is pasted.
+ */
+const SEPARATORS_RE = /[\s\p{Pd}\u2212\p{Cf}]+/gu;
 const CROCKFORD_SUBSTITUTIONS_RE = /[OIL]/g;
 const CROCKFORD_SUBSTITUTIONS: Readonly<Record<string, string>> = { O: '0', I: '1', L: '1' };
 const BASE64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
@@ -135,14 +139,22 @@ function scryptMemory(N: number, r: number, p: number): number {
   return 128 * r * (N + p + 2);
 }
 
+/**
+ * Parameters node:crypto will actually run: N a power of two below 2^(16r) (an OpenSSL rule - e.g. N=2^16 with
+ * r=1 is refused) and the memory within SCRYPT_MAXMEM. Callers have already range-checked N, r and p.
+ */
+function isRunnableScrypt(N: number, r: number, p: number): boolean {
+  return isPowerOfTwo(N) && N < 2 ** (16 * r) && scryptMemory(N, r, p) <= SCRYPT_MAXMEM;
+}
+
 function isBase64OfLength(value: unknown, byteLength: number): value is string {
   return typeof value === 'string' && BASE64_RE.test(value) && Buffer.from(value, 'base64').length === byteLength;
 }
 
 /**
  * Structural check for a WrappedKey read from untrusted input (e.g. a backup file): right version, field
- * lengths, and scrypt parameters within safe bounds (N a power of two, memory within the scrypt limit and a
- * bounded cost, so a crafted file can neither cause a DoS nor an obscure crypto error).
+ * lengths, and scrypt parameters within safe bounds (a bounded cost, and only combinations node:crypto will
+ * run - see isRunnableScrypt), so a crafted file can neither cause a DoS nor an obscure crypto error.
  */
 export function isWrappedKey(value: unknown): value is WrappedKey {
   if (typeof value !== 'object' || value === null) return false;
@@ -151,10 +163,9 @@ export function isWrappedKey(value: unknown): value is WrappedKey {
     w.v === 1 &&
     w.kdf === 'scrypt' &&
     isIntInRange(w.N, 2, MAX_SCRYPT_N) &&
-    isPowerOfTwo(w.N) &&
     isIntInRange(w.r, 1, MAX_SCRYPT_R) &&
     isIntInRange(w.p, 1, MAX_SCRYPT_P) &&
-    scryptMemory(w.N, w.r, w.p) <= SCRYPT_MAXMEM &&
+    isRunnableScrypt(w.N, w.r, w.p) &&
     isBase64OfLength(w.salt, SALT_LEN) &&
     isBase64OfLength(w.nonce, NONCE_LEN) &&
     isBase64OfLength(w.ct, MASTER_KEY_LEN) &&

@@ -45,6 +45,9 @@
 .st-row-wide {
   grid-template-columns: minmax(0, 1fr);
 }
+.st-toggle-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
 .st-row-text {
   display: flex;
   flex-direction: column;

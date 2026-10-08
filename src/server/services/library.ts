@@ -41,6 +41,8 @@ export function contentOf(m: MacroContent): MacroContent {
   };
 }
 
+const titleCollator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
+
 function normalizeTitle(title: string): string {
   return title.trim().toLowerCase().replace(/\s+/g, ' ');
 }
@@ -75,7 +77,7 @@ export class LibraryService {
 
   list(includeArchived = false): Macro[] {
     if (includeArchived) return this.macros.listAll({ includeArchived: true });
-    return [...this.active.values()].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
+    return [...this.active.values()].sort((a, b) => titleCollator.compare(a.title, b.title));
   }
 
   /** Active macro from cache, falling back to the DB (archived macros). */

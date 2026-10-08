@@ -66,6 +66,19 @@ export function buildQuickSearchIndex(macros: readonly Macro[], categories: read
   return { macros, haystack, bodies, categoryNames, defaultOrder, defaultRank };
 }
 
+let cachedIndex: { macros: readonly Macro[]; categories: readonly Category[]; index: QuickSearchIndex } | null = null;
+
+/**
+ * Memoized index for the current store lists: rebuilt only when the macro or category array changes, so
+ * reopening the palette is free and nothing is computed while it stays closed.
+ */
+export function quickSearchIndexFor(macros: readonly Macro[], categories: readonly Category[]): QuickSearchIndex {
+  if (cachedIndex?.macros !== macros || cachedIndex.categories !== categories) {
+    cachedIndex = { macros, categories, index: buildQuickSearchIndex(macros, categories) };
+  }
+  return cachedIndex.index;
+}
+
 /** Keep the parts of haystack highlight ranges that fall inside the title (the haystack's prefix), sorted. */
 function clipToTitle(ranges: readonly number[] | undefined, titleLength: number): number[] {
   if (!ranges) return [];

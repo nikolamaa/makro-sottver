@@ -66,9 +66,10 @@ const TRIGGER_SPLIT_RE = /[|\n]/;
 const WHITESPACE_RUN_RE = /\s+/g;
 const NEWLINE_RE = /\r\n?/g;
 const SLUG_INVALID_RE = /[^a-z0-9]+/g;
-const COMBINING_MARKS_RE = /[̀-ͯ]/g;
+const COMBINING_MARKS_RE = /[\u0300-\u036f]/g;
 const EDGE_UNDERSCORES_RE = /^_+|_+$/g;
 const SLUG_MAX_LENGTH = 60;
+const MAX_UNKNOWN_SHOWN = 5;
 
 const FACT_STATUSES: ReadonlySet<string> = new Set<FactStatus>(['unchecked', 'verified', 'outdated', 'contradicted', 'unverifiable']);
 
@@ -212,37 +213,52 @@ function keepFirst<T>(values: T[], max: number, noun: string, label: string, log
 
 function readIntents(value: unknown, label: string, log: ProblemLog): Intent[] {
   const intents: Intent[] = [];
-  const unknown: string[] = [];
+  const unknown = new Set<string>();
   for (const raw of asList(value, LIST_SPLIT_RE)) {
     const text = cleanLine(raw);
     if (!text) continue;
     const intent = INTENT_LOOKUP.get(slugify(text));
-    if (!intent) unknown.push(text);
+    if (!intent) unknown.add(text);
     else if (!intents.includes(intent)) intents.push(intent);
   }
-  if (unknown.length) log.add(`${label}: unknown intent(s) dropped: ${unknown.map(quoteShort).join(', ')}`);
+  if (unknown.size) log.add(`${label}: unknown intent(s) dropped: ${describeUnknown([...unknown])}`);
   return keepFirst(intents, IMPORT_LIMITS.maxIntents, 'intents', label, log);
+}
+
+/** '"a", "b", "c"' - at most MAX_UNKNOWN_SHOWN names, then "and N more", so one bad cell cannot flood the preview. */
+function describeUnknown(names: readonly string[]): string {
+  const shown = names.slice(0, MAX_UNKNOWN_SHOWN).map(quoteShort).join(', ');
+  const hidden = names.length - MAX_UNKNOWN_SHOWN;
+  return hidden > 0 ? `${shown} and ${hidden} more` : shown;
 }
 
 // ---------------------------------------------------------------------------
 // Facts
 // ---------------------------------------------------------------------------
 
-/** Facts come as an array (JSON) or a JSON array string (CSV cell). Bad facts are reported and skipped. */
+/**
+ * Facts come as an array (JSON) or a JSON array string (CSV cell); a single fact object is accepted too.
+ * Bad facts are reported and skipped; keys are made unique within the macro. Reading stops once
+ * IMPORT_LIMITS.maxFacts facts were accepted, so a huge list costs nothing beyond JSON parsing.
+ */
 function readFacts(value: unknown, label: string, log: ProblemLog): FactInput[] {
   const list = parseFactList(value, label, log);
   const facts: FactInput[] = [];
   const usedKeys = new Set<string>();
-  list.forEach((rawFact, i) => {
-    const result = toFact(rawFact);
+  for (let i = 0; i < list.length; i++) {
+    if (facts.length === IMPORT_LIMITS.maxFacts) {
+      log.add(`${label}: only the first ${IMPORT_LIMITS.maxFacts} facts were kept`);
+      break;
+    }
+    const result = toFact(list[i]);
     if (typeof result === 'string') {
       log.add(`${label}, fact ${i + 1}: ${result}`);
-      return;
+      continue;
     }
     result.key = uniqueKey(result.key, usedKeys);
     facts.push(result);
-  });
-  return keepFirst(facts, IMPORT_LIMITS.maxFacts, 'facts', label, log);
+  }
+  return facts;
 }
 
 function parseFactList(value: unknown, label: string, log: ProblemLog): unknown[] {
@@ -258,6 +274,7 @@ function parseFactList(value: unknown, label: string, log: ProblemLog): unknown[
     }
   }
   if (Array.isArray(list)) return list;
+  if (isRecord(list)) return [list];
   log.add(`${label}: facts must be a list and were skipped`);
   return [];
 }
@@ -270,15 +287,24 @@ function toFact(rawFact: unknown): FactInput | string {
   const statement = cleanMultiline(get('statement'));
   if (!statement) return 'missing statement';
   const fact: FactInput = {
-    key: cleanLine(get('key')) || slugify(statement).slice(0, SLUG_MAX_LENGTH).replace(EDGE_UNDERSCORES_RE, '') || 'fact',
+    key: cleanLine(get('key')) || defaultFactKey(statement),
     statement,
     value: cleanMultiline(get('value')),
     sourceUrl: cleanLine(get('sourceurl')) || cleanLine(get('source')) || null,
     evidenceQuote: cleanMultiline(get('evidencequote')) || null,
   };
   const status = get('status');
-  if (typeof status === 'string' && FACT_STATUSES.has(status)) fact.status = status as FactStatus;
+  if (isFactStatus(status)) fact.status = status;
   return factOverflow(fact) ?? fact;
+}
+
+/** Slug of the statement, e.g. "Minimum deposit is 10 USD" -> "minimum_deposit_is_10_usd". */
+function defaultFactKey(statement: string): string {
+  return slugify(statement).slice(0, SLUG_MAX_LENGTH).replace(EDGE_UNDERSCORES_RE, '') || 'fact';
+}
+
+function isFactStatus(value: unknown): value is FactStatus {
+  return typeof value === 'string' && FACT_STATUSES.has(value);
 }
 
 function factOverflow(fact: FactInput): string | null {
@@ -302,9 +328,13 @@ function keyedGetter(record: Record<string, unknown>): (normalized: string) => u
   return (normalized) => byKey.get(normalized);
 }
 
+/** `key`, or `key_2`, `key_3`, ... when taken; the base is shortened so the result stays within the key limit. */
 function uniqueKey(key: string, used: Set<string>): string {
   let candidate = key;
-  for (let n = 2; used.has(candidate); n++) candidate = `${key}_${n}`;
+  for (let n = 2; used.has(candidate); n++) {
+    const suffix = `_${n}`;
+    candidate = key.slice(0, IMPORT_LIMITS.factKey - suffix.length) + suffix;
+  }
   used.add(candidate);
   return candidate;
 }

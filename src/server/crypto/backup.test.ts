@@ -64,7 +64,7 @@ describe('readBackup', () => {
 
   it('accepts a string, a UTF-8 BOM and a sloppily typed recovery key', () => {
     const sloppy = recoveryKey.replace('MPRK-', '').replaceAll('-', ' ').toLowerCase();
-    expect(readBackup(`﻿${backup.toString('utf8')}`, sloppy).payload).toEqual(payload);
+    expect(readBackup(`\ufeff${backup.toString('utf8')}`, sloppy).payload).toEqual(payload);
   });
 
   it('round-trips other JSON values', () => {
@@ -117,6 +117,7 @@ describe('readBackup', () => {
     ['a missing wrapped key', { wrappedKey: undefined }],
     ['a malformed wrapped key', { wrappedKey: { v: 1, kdf: 'scrypt' } }],
     ['hostile scrypt parameters', { wrappedKey: { ...container().wrappedKey, N: 2 ** 30 } }],
+    ['scrypt parameters OpenSSL refuses (N >= 2^(16r))', { wrappedKey: { ...container().wrappedKey, N: 2 ** 16, r: 1 } }],
     ['a missing payload', { payload: undefined }],
     ['a non-base64 payload', { payload: '%%% not base64 %%%' }],
     ['a missing createdAt', { createdAt: undefined }],

@@ -1,15 +1,57 @@
 /**
  * Deterministic ("fast") personalization + guardrails + pseudonymization. Pure functions, no I/O.
+ *
+ * This module is the public entry point; the building blocks live next to it:
+ *   greeting.ts (ensureGreeting), tone.ts (applyTone), combine.ts (combineBodies),
+ *   grounding.ts (checkGrounding), pseudonymize.ts (pseudonymize / restorePseudonyms).
  */
+import { findPlaceholders, listVariables, placeholderLabel, renderTemplate } from '../../shared/template.js';
 import type {
   Analysis,
   AppSettings,
-  Entity,
-  Fact,
+  EntityType,
   GuardrailIssue,
   Macro,
+  Placeholder,
   PersonalizeResponse,
 } from '../../shared/types.js';
+import { combineBodies } from './combine.js';
+import { ensureGreeting, withUserFallback } from './greeting.js';
+import { boundedPattern, tidyParagraphs, variableValue } from './text.js';
+import { applyTone } from './tone.js';
+
+export { ensureGreeting } from './greeting.js';
+export { applyTone } from './tone.js';
+export { combineBodies } from './combine.js';
+export { checkGrounding, type GroundingSources } from './grounding.js';
+export { applyPseudonyms, pseudonymize, restorePseudonyms, type Pseudonymized } from './pseudonymize.js';
+
+export const RG_WARNING = 'Responsible gambling risk detected - follow the RG/wellbeing procedure before replying.';
+export const NON_ENGLISH_WARNING = 'The message may not be in English - translate it in Intercom first.';
+const PLACEHOLDER_DETAIL = 'Fill in this placeholder before sending.';
+
+/** Entity type -> standard template variable. eta_time / date / link / bonus_amount are never filled from text. */
+const ENTITY_VARIABLES: Partial<Record<EntityType, string>> = {
+  name: 'user',
+  username: 'username',
+  email: 'email',
+  amount: 'amount',
+  currency: 'currency',
+  crypto: 'crypto',
+  network: 'network',
+  tx_hash: 'tx_hash',
+  bet_id: 'bet_id',
+  vip_rank: 'vip_rank',
+  bonus_name: 'bonus_name',
+  document_type: 'document_type',
+  game: 'game',
+  provider: 'provider',
+};
+
+/** "john smith" -> "John Smith"; names that already contain a capital letter are kept as written. */
+function displayName(name: string): string {
+  return /\p{Lu}/u.test(name) ? name : name.replace(/(^|[\s'-])(\p{Ll})/gu, (_m, sep: string, c: string) => sep + c.toUpperCase());
+}
 
 /**
  * Map analysis entities to standard template variables:
@@ -17,40 +59,18 @@ import type {
  *   currency when no fiat currency was found), network->network, tx_hash->tx_hash, bet_id->bet_id,
  *   vip_rank->vip_rank, bonus_name->bonus_name, document_type->document_type, game->game, provider->provider.
  * NEVER fills eta_time / date / link / bonus_amount from customer text (those are policy values the agent
- * must confirm). First occurrence wins.
+ * must confirm). First occurrence (by position in the message) wins.
  */
 export function variablesFromAnalysis(analysis: Analysis): Record<string, string> {
-  throw new Error('TODO');
-}
-
-/**
- * Ensure the reply starts with a greeting. If the text already starts with a greeting (hi/hello/hey/dear/
- * good morning...), it is kept. Otherwise `greetingTemplate` (e.g. "Hi {{user}},") is rendered with `vars`
- * (user falls back to `userFallback`) and prepended on its own line.
- */
-export function ensureGreeting(text: string, greetingTemplate: string, vars: Record<string, string>, userFallback: string): string {
-  throw new Error('TODO');
-}
-
-/**
- * Tone adjustment based on sentiment/urgency. Inserts at most one short sentence right after the greeting line:
- *   angry/frustrated -> sincere apology + ownership (varied phrasings, chosen deterministically from the message)
- *   confused         -> reassurance ("No worries, here's how it works:")
- *   positive         -> thanks
- *   neutral          -> nothing
- * Skips insertion when the body already contains an apology/thanks sentence. Never promises outcomes.
- */
-export function applyTone(text: string, analysis: Analysis, enabled: boolean): { text: string; added: string[] } {
-  throw new Error('TODO');
-}
-
-/**
- * Combine several macro bodies into one reply: keep the first greeting only, drop repeated sign-offs/closing
- * lines ("Let me know if...", "Have a great day") except the last, separate parts with a blank line, and prefix
- * parts 2..n with a short bridge ("Regarding your question about <title lowercased>:").
- */
-export function combineBodies(parts: { title: string; body: string }[]): string {
-  throw new Error('TODO');
+  const vars: Record<string, string> = {};
+  for (const entity of [...analysis.entities].sort((a, b) => a.start - b.start)) {
+    const name = ENTITY_VARIABLES[entity.type];
+    const value = (entity.value || entity.raw).trim();
+    if (!name || !value || Object.hasOwn(vars, name)) continue;
+    vars[name] = name === 'user' ? displayName(value) : value;
+  }
+  if (!vars['currency'] && vars['crypto']) vars['currency'] = vars['crypto'];
+  return vars;
 }
 
 export interface FastPersonalizeInput {
@@ -62,54 +82,90 @@ export interface FastPersonalizeInput {
   settings: AppSettings['personalization'];
 }
 
+/** Detected values overlaid with the agent's non-empty overrides (keys lowercased). */
+function mergeVariables(detected: Record<string, string>, overrides: Record<string, string> | undefined): Record<string, string> {
+  const merged: Record<string, string> = { ...detected };
+  for (const [key, value] of Object.entries(overrides ?? {})) {
+    if (typeof value === 'string' && value.trim() !== '') merged[key.toLowerCase()] = value.trim();
+  }
+  return merged;
+}
+
+/** Questions whose intent none of the selected macros covers (questions without an intent are ignored). */
+export function unansweredQuestions(analysis: Analysis, macros: Pick<Macro, 'intents'>[]): string[] {
+  const covered = new Set(macros.flatMap((m) => m.intents));
+  const out = analysis.questions.filter((q) => q.intent !== null && !covered.has(q.intent)).map((q) => q.text.trim());
+  return [...new Set(out)].filter((q) => q !== '');
+}
+
+/** Visible warnings for a personalized reply: RG risk, non-English message, outdated/conflicting macros. */
+export function personalizationWarnings(analysis: Analysis, macros: Pick<Macro, 'title' | 'verification'>[]): string[] {
+  const warnings: string[] = [];
+  if (analysis.rgRisk) warnings.push(RG_WARNING);
+  if (analysis.isLikelyNonEnglish) warnings.push(NON_ENGLISH_WARNING);
+  for (const macro of macros) {
+    if (macro.verification === 'outdated' || macro.verification === 'conflict') {
+      warnings.push(`Macro '${macro.title}' contains outdated or conflicting information - check the facts before sending.`);
+    }
+  }
+  return warnings;
+}
+
+/** Ids of the macros' facts whose value appears in the text (case-insensitive, whitespace-normalized). */
+function usedFactIds(macros: Pick<Macro, 'facts'>[], text: string): string[] {
+  const haystack = text.replace(/\s+/g, ' ');
+  const ids = new Set<string>();
+  for (const fact of macros.flatMap((m) => m.facts)) {
+    const value = fact.value.replace(/\s+/g, ' ').trim();
+    if (value && new RegExp(boundedPattern(value), 'iu').test(haystack)) ids.add(fact.id);
+  }
+  return [...ids];
+}
+
+/** Every placeholder left in the text, linked to its variable when it came from a {{variable}}. */
+function collectPlaceholders(text: string, templates: string[]): Placeholder[] {
+  const byLabel = new Map<string, string>();
+  for (const name of templates.flatMap((t) => listVariables(t))) byLabel.set(placeholderLabel(name), name);
+  return findPlaceholders(text).map((label) => ({ label, variable: byLabel.get(label) ?? null }));
+}
+
 /**
  * Deterministic personalization:
- *   combine bodies -> render template (detected vars + overrides; {{user}} falls back to settings.userFallback)
- *   -> ensureGreeting -> applyTone -> collect placeholders -> unansweredQuestions (questions whose intent is not in
- *   any selected macro's intents) -> warnings (rgRisk, non-English, outdated facts) -> guardrail (left placeholders).
- * mode = 'fast', llm = null, usedFactIds = ids of the selected macros' facts whose value appears in the text.
+ *   combine bodies (macros in the order given) -> render template (agent overrides > detected vars; a bare
+ *   {{user}} falls back to settings.userFallback, inline fallbacks like {{user|valued customer}} win over it)
+ *   -> ensureGreeting -> applyTone -> collect placeholders -> unansweredQuestions (questions whose intent is not
+ *   in any selected macro's intents) -> warnings (rgRisk, non-English, outdated/conflicting macros)
+ *   -> guardrail (one 'placeholder_left' issue per remaining placeholder).
+ * mode = 'fast', llm = null, usedFactIds = ids of the selected macros' facts whose value appears in the text,
+ * filledVariables = variables used by the reply that received a real (detected or agent) value.
  */
 export function personalizeFast(input: FastPersonalizeInput): PersonalizeResponse {
-  throw new Error('TODO');
-}
+  const { macros, analysis, settings } = input;
+  const vars = mergeVariables(variablesFromAnalysis(analysis), input.variables);
 
-export interface GroundingSources {
-  macroBodies: string[];
-  facts: Pick<Fact, 'statement' | 'value' | 'sourceUrl'>[];
-  message: string;
-  variables: Record<string, string>;
-}
+  const combined = combineBodies(macros.map((m) => ({ title: m.title, body: m.body })));
+  const rendered = renderTemplate(withUserFallback(combined, vars, settings.userFallback), vars).text;
+  const greeted = ensureGreeting(rendered, settings.greeting, vars, settings.userFallback);
+  const text = tidyParagraphs(applyTone(greeted, analysis, settings.toneAdjust).text);
 
-/**
- * Anti-hallucination check for AI-written replies. Flags:
- *  - unsupported_number: numbers/amounts/percentages/durations (e.g. "24 hours", "5%", "$100", "3-5 days") that do
- *    not appear in any source (macro bodies, fact statements/values, the customer message, variable values).
- *    Normalize before comparing (thousand separators, "24h" ~ "24 hours", words "one".."ten").
- *  - unsupported_url: URLs/domains not present in the sources.
- *  - promise: guarantee language not present in sources ("guarantee", "will definitely", "100%", "I promise",
- *    "will be credited today", "refund you").
- *  - placeholder_left: any [ENTER ...] placeholder left in the text.
- */
-export function checkGrounding(reply: string, sources: GroundingSources): GuardrailIssue[] {
-  throw new Error('TODO');
-}
+  const templates = greeted === rendered ? [combined] : [combined, settings.greeting];
+  const filledVariables: Record<string, string> = {};
+  for (const name of templates.flatMap((t) => listVariables(t))) {
+    const value = variableValue(vars, name);
+    if (value !== undefined) filledVariables[name] = value;
+  }
+  const placeholders = collectPlaceholders(text, templates);
+  const guardrail: GuardrailIssue[] = placeholders.map((p) => ({ kind: 'placeholder_left', text: p.label, detail: PLACEHOLDER_DETAIL }));
 
-export interface Pseudonymized {
-  text: string;
-  /** token -> original value, e.g. "⟦EMAIL_1⟧" -> "john@x.com" */
-  mapping: Record<string, string>;
-}
-
-/**
- * Replace personal data with stable tokens before text goes to a cloud LLM: entities of type email, username,
- * name, phone, tx_hash, crypto_address, bet_id, plus any value in `knownValues` (e.g. agent-entered user name).
- * Same value -> same token. Tokens look like ⟦EMAIL_1⟧, ⟦NAME_1⟧, ⟦TX_HASH_1⟧. Amounts/currencies are kept.
- */
-export function pseudonymize(text: string, entities: Entity[], knownValues?: Record<string, string>): Pseudonymized {
-  throw new Error('TODO');
-}
-
-/** Replace tokens back with original values (unknown tokens are left as-is). */
-export function restorePseudonyms(text: string, mapping: Record<string, string>): string {
-  throw new Error('TODO');
+  return {
+    text,
+    mode: 'fast',
+    filledVariables,
+    placeholders,
+    usedFactIds: usedFactIds(macros, text),
+    unansweredQuestions: unansweredQuestions(analysis, macros),
+    guardrail,
+    warnings: personalizationWarnings(analysis, macros),
+    llm: null,
+  };
 }

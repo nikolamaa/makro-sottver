@@ -1,0 +1,149 @@
+/* Ctrl/Cmd+K quick-search palette. Uses the design tokens from styles.css. */
+
+.qs-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: start center;
+  padding: 12vh 16px 16px;
+  background: rgba(10, 12, 18, 0.45);
+}
+.qs-dialog {
+  width: min(640px, 100%);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.28);
+}
+.qs-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.qs-search input,
+.qs-search input:focus {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  padding: 8px 2px;
+  font-size: 16px;
+}
+
+/* Fixed height: the dialog never changes size while results update. */
+.qs-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  height: min(420px, 56vh);
+  overflow-y: auto;
+}
+.qs-pending {
+  opacity: 0.75;
+}
+.qs-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.qs-item.is-active {
+  background: var(--accent-soft);
+}
+.qs-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+}
+.qs-dot-verified {
+  background: var(--success);
+}
+.qs-dot-outdated {
+  background: var(--warning);
+}
+.qs-dot-conflict {
+  background: var(--danger);
+}
+.qs-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.qs-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.qs-title mark {
+  background: transparent;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.qs-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.qs-sub code {
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.qs-verification {
+  display: none;
+}
+.qs-item.is-active .qs-verification {
+  display: inline;
+}
+.qs-side {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.qs-star {
+  color: #e6a700;
+}
+.qs-empty {
+  padding: 40px 16px;
+  text-align: center;
+  color: var(--muted);
+}
+.qs-skeleton {
+  height: 38px;
+  margin: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.qs-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--muted);
+}
+.qs-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}

@@ -184,7 +184,7 @@ export const parseTriggers = (text: string): string[] => parseList(text, /\r?\n/
 
 const FACT_CONTENT_KEYS = ['key', 'statement', 'value', 'sourceUrl', 'evidenceQuote'] as const;
 
-function isBlankFact(f: FactDraft): boolean {
+export function isBlankFact(f: FactDraft): boolean {
   return FACT_CONTENT_KEYS.every((k) => !f[k].trim());
 }
 

@@ -11,6 +11,8 @@ import type { RawMacro } from './normalize.js';
 import type { ProblemLog } from './problems.js';
 
 const DELIMITERS = [',', ';', '\t'] as const;
+/** Captures the first line that is not blank. */
+const LEADING_BLANK_LINES_RE = /^(?:[ \t]*\n)*([^\n]*)/;
 /** Required columns with the header names users can pick from. */
 const REQUIRED_COLUMNS = [
   ['title', 'a title column (title, name, macro or macro name)'],
@@ -63,10 +65,12 @@ function headerIndex(header: readonly string[]): Map<string, number> {
   return index;
 }
 
-/** The candidate delimiter that occurs most often in the header line (comma on ties). */
+/**
+ * The candidate delimiter that occurs most often in the header line (comma on ties). The header is the first
+ * non-blank line, matching csv-parse's skip_empty_lines, so pasted CSV may start with blank lines.
+ */
 function detectDelimiter(text: string): string {
-  const newline = text.indexOf('\n');
-  const headerLine = newline === -1 ? text : text.slice(0, newline);
+  const headerLine = LEADING_BLANK_LINES_RE.exec(text)?.[1] ?? '';
   let best: string = DELIMITERS[0];
   let bestCount = 0;
   for (const delimiter of DELIMITERS) {

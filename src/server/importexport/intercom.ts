@@ -14,10 +14,10 @@ const NATIVE_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const INTERCOM_FALLBACK_RE = /^\s*fallback\s*:\s*/i;
 const ATTRIBUTE_PREFIX_RE = /^(?:user|contact|lead|customer)\./;
 const INVALID_NAME_CHARS_RE = /[^a-z0-9_]+/g;
-const EDGE_UNDERSCORES_RE = /^_+|_+$/g;
+const UNDERSCORE = '_';
 const LEADING_DIGIT_RE = /^[0-9]/;
-const OPENING_QUOTES = new Set(['"', "'", '“', '‘']);
-const CLOSING_QUOTES = new Set(['"', "'", '”', '’']);
+const OPENING_QUOTES = new Set(['"', "'", '\u201C', '\u2018']);
+const CLOSING_QUOTES = new Set(['"', "'", '\u201D', '\u2019']);
 
 /** Intercom person attributes that map onto MacroPilot's standard {{user}} variable. */
 const ATTRIBUTE_ALIASES: ReadonlyMap<string, string> = new Map([
@@ -48,14 +48,22 @@ function convertToken(raw: string, inner: string): string {
 
 /** Lowercase, strip "user."-style prefixes, replace invalid characters with "_" and apply aliases. */
 function toVariableName(rawName: string): string {
-  const cleaned = rawName
-    .toLowerCase()
-    .replace(ATTRIBUTE_PREFIX_RE, '')
-    .replace(INVALID_NAME_CHARS_RE, '_')
-    .replace(EDGE_UNDERSCORES_RE, '');
+  const cleaned = trimUnderscores(rawName.toLowerCase().replace(ATTRIBUTE_PREFIX_RE, '').replace(INVALID_NAME_CHARS_RE, '_'));
   if (!cleaned) return '';
   const name = LEADING_DIGIT_RE.test(cleaned) ? `_${cleaned}` : cleaned;
   return ATTRIBUTE_ALIASES.get(name) ?? name;
+}
+
+/**
+ * Strip leading/trailing "_" in linear time (a /_+$/ regex backtracks quadratically on long inner "_" runs,
+ * which a pasted body could otherwise use to freeze the server).
+ */
+function trimUnderscores(text: string): string {
+  let start = 0;
+  let end = text.length;
+  while (start < end && text.charAt(start) === UNDERSCORE) start++;
+  while (end > start && text.charAt(end - 1) === UNDERSCORE) end--;
+  return text.slice(start, end);
 }
 
 function unquote(text: string): string {

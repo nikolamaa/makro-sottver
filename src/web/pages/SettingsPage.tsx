@@ -41,10 +41,10 @@ function goToSection(id: string): void {
   document.getElementById(`${id}-title`)?.focus({ preventScroll: true });
 }
 
-function useActiveSection(): string {
+function useActiveSection(ready: boolean): string {
   const [active, setActive] = useState(SECTIONS[0]!.id);
   useEffect(() => {
-    if (typeof IntersectionObserver === 'undefined') return;
+    if (!ready || typeof IntersectionObserver === 'undefined') return;
     const visible = new Map<string, number>();
     const observer = new IntersectionObserver(
       (entries) => {
@@ -70,7 +70,7 @@ function useActiveSection(): string {
       if (el) observer.observe(el);
     }
     return () => observer.disconnect();
-  }, []);
+  }, [ready]);
   return active;
 }
 
@@ -97,7 +97,7 @@ function SaveIndicator({ state }: { state: SaveState }) {
 export function SettingsPage() {
   const settings = useStore((s) => s.settings);
   const saver = useSettingsSaver();
-  const active = useActiveSection();
+  const active = useActiveSection(settings !== null);
 
   useHotkeys({ 'mod+s': () => saver.flush() }, [saver.flush]);
 
@@ -111,9 +111,15 @@ export function SettingsPage() {
 
   return (
     <div className="page st-page">
+      <div className="st-topbar">
+        <h1 className="st-title">Settings</h1>
+        <SaveIndicator state={saver.state} />
+        <span className="st-topbar-hint muted small">
+          <Kbd combo="mod+s" /> save now
+        </span>
+      </div>
       <div className="st-layout">
         <nav className="st-nav" aria-label="Settings sections">
-          <h1 className="st-title">Settings</h1>
           <ul>
             {SECTIONS.map((s) => (
               <li key={s.id}>
@@ -131,14 +137,6 @@ export function SettingsPage() {
         </nav>
 
         <div className="st-content">
-          <div className="st-topbar">
-            <h1 className="st-title-inline">Settings</h1>
-            <SaveIndicator state={saver.state} />
-            <span className="st-topbar-hint muted small">
-              <Kbd combo="mod+s" /> save now
-            </span>
-          </div>
-
           <AiSection settings={settings} update={saver.update} applyServerSettings={saver.applyServerSettings} />
           <SearchSection settings={settings} update={saver.update} />
           <RepliesSection settings={settings} update={saver.update} />

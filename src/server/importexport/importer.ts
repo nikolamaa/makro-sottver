@@ -12,7 +12,7 @@ import type { SourceRead } from './normalize.js';
 import { ProblemLog } from './problems.js';
 import { readText } from './textReader.js';
 
-const BOM = '﻿';
+const BOM = '\uFEFF';
 const NEWLINE_RE = /\r\n?/g;
 const BYTES_PER_MB = 1024 * 1024;
 

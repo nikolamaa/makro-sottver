@@ -82,10 +82,14 @@ export function matchConcepts(text: string): Map<string, string[]> {
 // Typo correction against single-word concept terms
 // ---------------------------------------------------------------------------
 
-const MIN_TYPO_TOKEN = 6;
+const MIN_TYPO_TOKEN = 5;
 const MIN_VOCAB_TERM = 5;
+/** An extra letter is only assumed on words of >= 6 letters (5-letter words would map to 4-letter terms). */
+const MIN_EXTRA_LETTER_TOKEN = 6;
 /** Substitutions ("withdrawel") are only trusted on long words; short ones collide with real words. */
 const MIN_SUBSTITUTION_TOKEN = 8;
+/** Real English words one edit away from a domain term ("layer" ~ "lawyer"); never corrected. */
+const REAL_WORDS: ReadonlySet<string> = new Set(['spots', 'total', 'layer', 'broke']);
 const ALPHA_RE = /^[a-z]+$/;
 
 const VOCAB: ReadonlySet<string> = new Set(TERMS.map((t) => t.term).filter((t) => t.length >= MIN_VOCAB_TERM && ALPHA_RE.test(t)));
@@ -112,7 +116,7 @@ function findCorrection(token: string): string | null {
   for (let i = 1; i < n; i++) {
     const shorter = token.slice(0, i) + token.slice(i + 1);
     // Extra letter: "deposite" -> "deposit".
-    if (VOCAB.has(shorter)) return shorter;
+    if (n >= MIN_EXTRA_LETTER_TOKEN && VOCAB.has(shorter)) return shorter;
     // Wrong letter: "withdrawel" -> "withdrawal".
     if (n >= MIN_SUBSTITUTION_TOKEN) {
       const replaced = DELETES.get(shorter);
@@ -131,11 +135,11 @@ const MEMO_LIMIT = 20_000;
 const memo = new Map<string, string | null>();
 
 /**
- * Concept term a misspelled lowercase token most likely stands for, or null. Only tokens of >= 6 letters that are
+ * Concept term a misspelled lowercase token most likely stands for, or null. Only tokens of >= 5 letters that are
  * not themselves concept terms are corrected, and the first letter is never changed ("spending" stays itself).
  */
 export function correctTypo(token: string): string | null {
-  if (token.length < MIN_TYPO_TOKEN || VOCAB.has(token) || !ALPHA_RE.test(token)) return null;
+  if (token.length < MIN_TYPO_TOKEN || VOCAB.has(token) || REAL_WORDS.has(token) || !ALPHA_RE.test(token)) return null;
   const cached = memo.get(token);
   if (cached !== undefined) return cached;
   const result = findCorrection(token);

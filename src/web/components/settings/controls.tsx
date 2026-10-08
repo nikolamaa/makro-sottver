@@ -265,11 +265,10 @@ export function TextSetting({
           focused.current = true;
         }}
         onBlur={() => {
+          // Show the saved value (trimmed, or the last valid one when the draft was invalid).
           focused.current = false;
-          if (check(draft)) {
-            setDraft(value);
-            setError(null);
-          }
+          setDraft(value);
+          setError(null);
         }}
         onChange={(e) => {
           const v = e.target.value;

@@ -11,7 +11,7 @@
 .rk-key {
   display: block;
   font-family: var(--mono);
-  font-size: clamp(15px, 2.4vw, 19px);
+  font-size: clamp(14px, 2.2vw, 17px);
   font-weight: 600;
   letter-spacing: 0.04em;
   line-height: 1.5;

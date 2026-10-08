@@ -1,9 +1,19 @@
 /**
  * In-memory hybrid index over active macros: BM25/fuzzy lexical search (MiniSearch) + vector similarity
  * (Embedder) + intent match + usage prior. Everything lives in memory (decrypted), so search is ~ms.
+ *
+ * Consistency model: mutations that need embeddings (rebuild, upsert, setEmbedder) run one at a time in call
+ * order and swap state in synchronously when done; remove() applies immediately and wins over any older
+ * pending write of the same macro. Searches never wait for mutations.
  */
 import type { Analysis, Id, Intent, Macro, Recommendation } from '../../shared/types.js';
-import type { Embedder } from './embedder.js';
+import { INTENT_LABELS } from '../../shared/types.js';
+import { matchConcepts } from './concepts.js';
+import { createFallbackEmbedder, type Embedder } from './embedder.js';
+import { createLexicalIndex, searchLexical, toIndexDoc, type LexicalIndex } from './lexical.js';
+import { buildLexicalQuery } from './query.js';
+import { rankMacros, type IndexedMacro } from './ranker.js';
+import { stripTemplateVariables } from './text.js';
 
 export interface EmbeddingCache {
   get(model: string, key: string): Float32Array | null;
@@ -23,36 +33,111 @@ export interface SearchResult {
   uncoveredIntents: Intent[];
 }
 
+const BODY_PASSAGE_CHARS = 800;
+const EMBED_BATCH = 64;
+
+interface Entry extends IndexedMacro {
+  /** Content key (HMAC) used for the embedding cache. */
+  key: string;
+}
+
+interface IndexState {
+  embedder: Embedder;
+  entries: Map<Id, Entry>;
+  lexical: LexicalIndex;
+}
+
+type Part = 'head' | 'body';
+
+interface EmbedJob {
+  entry: Entry;
+  part: Part;
+  text: string;
+}
+
+/** Passage describing what the macro is for: title, example questions, intent labels, tags. */
+export function headPassage(m: Macro): string {
+  return [m.title, ...m.triggers, ...m.intents.map((i) => INTENT_LABELS[i]), ...m.tags].filter((s) => s.trim()).join('\n');
+}
+
+/** Passage with what the macro says: body without template variables, first 800 chars. */
+export function bodyPassage(m: Macro): string {
+  return stripTemplateVariables(m.body).replace(/\s+/g, ' ').trim().slice(0, BODY_PASSAGE_CHARS);
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 export class MacroIndex {
+  private state: IndexState;
+  private readonly cache: EmbeddingCache | null;
+  /** Tail of the mutation queue (rebuild/upsert/setEmbedder run one at a time). */
+  private queue: Promise<unknown> = Promise.resolve();
+  /** Monotonic operation counter; a remove() newer than a pending write cancels that write. */
+  private seq = 0;
+  private readonly removedAt = new Map<Id, number>();
+
   constructor(opts: { embedder: Embedder; cache?: EmbeddingCache }) {
-    throw new Error('TODO');
+    this.cache = opts.cache ?? null;
+    this.state = { embedder: opts.embedder, entries: new Map(), lexical: createLexicalIndex([]) };
   }
 
   get embedder(): Embedder {
-    throw new Error('TODO');
+    return this.state.embedder;
   }
 
-  /** Swap the embedder and re-embed every macro. */
+  /** Swap the embedder and re-embed every macro. Rejects (keeping the current index) if the embedder fails. */
   async setEmbedder(embedder: Embedder): Promise<void> {
-    throw new Error('TODO');
+    await this.enqueue(() => this.reembedAll(embedder));
   }
 
   /** Replace the whole index. `keyOf(m)` returns a stable content key (HMAC) used for the embedding cache. */
   async rebuild(macros: Macro[], keyOf: (m: Macro) => string): Promise<void> {
-    throw new Error('TODO');
+    const seq = ++this.seq;
+    const byId = new Map<Id, { macro: Macro; key: string }>();
+    for (const macro of macros) if (!macro.archivedAt) byId.set(macro.id, { macro, key: keyOf(macro) });
+    await this.enqueue(async () => {
+      const { embedder, entries } = await this.embedWithFallback(this.state.embedder, [...byId.values()]);
+      const kept = entries.filter((e) => !this.removedSince(e.macro.id, seq));
+      this.state = {
+        embedder,
+        entries: new Map(kept.map((e) => [e.macro.id, e])),
+        lexical: createLexicalIndex(kept.map((e) => e.macro)),
+      };
+      for (const [id, at] of this.removedAt) if (at <= seq) this.removedAt.delete(id);
+    });
   }
 
   /** Add or replace one macro (archived macros must be removed instead). */
   async upsert(macro: Macro, key: string): Promise<void> {
-    throw new Error('TODO');
+    if (macro.archivedAt) {
+      this.remove(macro.id);
+      return;
+    }
+    const seq = ++this.seq;
+    await this.enqueue(async () => {
+      const { embedder, entries } = await this.embedWithFallback(this.state.embedder, [{ macro, key }]);
+      if (embedder !== this.state.embedder) await this.reembedAll(embedder);
+      const entry = entries[0];
+      if (!entry || this.removedSince(macro.id, seq)) return;
+      const { lexical, entries: current } = this.state;
+      const doc = toIndexDoc(macro);
+      if (lexical.has(macro.id)) lexical.replace(doc);
+      else lexical.add(doc);
+      current.set(macro.id, entry);
+    });
   }
 
   remove(id: Id): void {
-    throw new Error('TODO');
+    this.removedAt.set(id, ++this.seq);
+    const { entries, lexical } = this.state;
+    entries.delete(id);
+    if (lexical.has(id)) lexical.discard(id);
   }
 
   size(): number {
-    throw new Error('TODO');
+    return this.state.entries.size;
   }
 
   /**
@@ -62,6 +147,130 @@ export class MacroIndex {
    * (excluding the single query embedding call).
    */
   async search(message: string, analysis: Analysis, opts: SearchOptions): Promise<SearchResult> {
-    throw new Error('TODO');
+    let queryVector: Float32Array | null = null;
+    // Retry once if the embedder was swapped while the query was being embedded (old vectors are gone).
+    for (let attempt = 0; attempt < 2 && this.state.entries.size > 0; attempt++) {
+      const embedder = this.state.embedder;
+      queryVector = await this.embedQuery(embedder, message);
+      if (this.state.embedder === embedder) break;
+      queryVector = null;
+    }
+    // Rank against the latest state: remove()/upsert() may have run while the query was embedded.
+    const state = this.state;
+    const query = buildLexicalQuery(message);
+    return rankMacros({
+      entries: state.entries,
+      provider: state.embedder.provider,
+      queryVector,
+      query,
+      lexicalHits: searchLexical(state.lexical, query),
+      analysis,
+      maxResults: opts.maxResults,
+      minConfidence: opts.minConfidence,
+    });
+  }
+
+  private async embedQuery(embedder: Embedder, message: string): Promise<Float32Array | null> {
+    try {
+      const [vector] = await embedder.embed([message], 'query');
+      return vector ?? null;
+    } catch {
+      // Search keeps working on lexical + intent signals; the embedder status reports the problem.
+      return null;
+    }
+  }
+
+  private enqueue(task: () => Promise<void>): Promise<void> {
+    const run = this.queue.then(task, task);
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  private removedSince(id: Id, seq: number): boolean {
+    return (this.removedAt.get(id) ?? -1) > seq;
+  }
+
+  /**
+   * Embed with `embedder`; if a non-builtin provider fails (e.g. Ollama stopped), degrade to builtin vectors
+   * so that saving a macro never fails because of the embedding service.
+   */
+  private async embedWithFallback(
+    embedder: Embedder,
+    items: { macro: Macro; key: string }[],
+  ): Promise<{ embedder: Embedder; entries: Entry[] }> {
+    try {
+      return { embedder, entries: await this.embedMacros(embedder, items) };
+    } catch (err) {
+      if (embedder.provider === 'builtin') throw err;
+      const fallback = createFallbackEmbedder(
+        `Fell back to built-in vectors: ${embedder.provider} embeddings (${embedder.model}) failed. ${errorMessage(err)}`,
+      );
+      return { embedder: fallback, entries: await this.embedMacros(fallback, items) };
+    }
+  }
+
+  /** Re-embed every current macro with `embedder` and swap it in; the lexical index is unchanged and shared. */
+  private async reembedAll(embedder: Embedder): Promise<void> {
+    const items = [...this.state.entries.values()].map(({ macro, key }) => ({ macro, key }));
+    const entries = await this.embedMacros(embedder, items);
+    const current = this.state;
+    // Macros removed while embedding are already gone from `current`.
+    const kept = entries.filter((e) => current.entries.has(e.macro.id));
+    this.state = { embedder, entries: new Map(kept.map((e) => [e.macro.id, e])), lexical: current.lexical };
+  }
+
+  /**
+   * Build index entries with head/body vectors. Cached vectors are reused (cache key `${key}:head|body`, model
+   * `${provider}:${model}`); missing ones are embedded in batches and stored. Builtin vectors are not cached:
+   * recomputing them (~0.1 ms) is cheaper than decrypting a cached copy.
+   */
+  private async embedMacros(embedder: Embedder, items: { macro: Macro; key: string }[]): Promise<Entry[]> {
+    await embedder.init();
+    const cache = embedder.provider === 'builtin' ? null : this.cache;
+    const model = `${embedder.provider}:${embedder.model}`;
+    const entries: Entry[] = [];
+    const jobs: EmbedJob[] = [];
+    for (const { macro, key } of items) {
+      const head = headPassage(macro);
+      const body = bodyPassage(macro);
+      const entry: Entry = { macro, key, head: null, body: null, concepts: new Set(matchConcepts(`${head}\n${body}`).keys()) };
+      entries.push(entry);
+      for (const [part, text] of [['head', head], ['body', body]] as const) {
+        if (!text) continue;
+        const cached = cache ? readCache(cache, model, `${key}:${part}`, embedder.dim) : null;
+        if (cached) entry[part] = cached;
+        else jobs.push({ entry, part, text });
+      }
+    }
+    for (let i = 0; i < jobs.length; i += EMBED_BATCH) {
+      const batch = jobs.slice(i, i + EMBED_BATCH);
+      const vectors = await embedder.embed(batch.map((j) => j.text), 'passage');
+      batch.forEach((job, k) => {
+        const vector = vectors[k];
+        if (!vector) return;
+        job.entry[job.part] = vector;
+        if (cache) writeCache(cache, model, `${job.entry.key}:${job.part}`, vector);
+      });
+    }
+    return entries;
+  }
+}
+
+/** Cached vector, or null when missing, unreadable or of the wrong dimension. */
+function readCache(cache: EmbeddingCache, model: string, key: string, dim: number): Float32Array | null {
+  try {
+    const v = cache.get(model, key);
+    return v && (dim === 0 || v.length === dim) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The cache is an optimization: a failed write must not fail indexing. */
+function writeCache(cache: EmbeddingCache, model: string, key: string, vector: Float32Array): void {
+  try {
+    cache.set(model, key, vector);
+  } catch {
+    // ignored on purpose
   }
 }

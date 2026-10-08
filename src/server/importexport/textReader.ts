@@ -11,9 +11,8 @@ import type { ImportField } from './fields.js';
 import type { RawMacro } from './normalize.js';
 
 const SEPARATOR_RE = /^\s*-{3,}\s*$/;
-const HEADING_RE = /^\s*###\s+(\S.*?)\s*$/;
+const HEADING_RE = /^\s*###\s+(\S.*)$/;
 const LEADING_HASHES_RE = /^#+\s*/;
-const HEADER_LINE_RE = /^\s*([A-Za-z][A-Za-z _-]*?)\s*:\s*(.*?)\s*$/;
 
 /**
  * Header keys accepted right after the title. Deliberately narrower than the CSV/JSON synonyms so a body
@@ -67,11 +66,17 @@ function blockToRaw(lines: readonly string[], label: string): RawMacro {
   for (i++; i < lines.length; i++) {
     const line = lines[i] ?? '';
     if (line.trim() === '') continue;
-    const header = HEADER_LINE_RE.exec(line);
-    const field = header ? TEXT_HEADERS.get(normalizeKey(header[1] ?? '')) : undefined;
-    if (!header || !field) break;
-    values[field] = header[2] ?? '';
+    const header = parseHeaderLine(line);
+    if (!header) break;
+    values[header.field] = header.value;
   }
   values.body = lines.slice(i).join('\n');
   return { label, values };
+}
+
+/** "Tags: a, b" -> {field: 'tags', value: 'a, b'}; null when the line is not a known header. */
+function parseHeaderLine(line: string): { field: ImportField; value: string } | null {
+  const colon = line.indexOf(':');
+  const field = colon === -1 ? undefined : TEXT_HEADERS.get(normalizeKey(line.slice(0, colon)));
+  return field ? { field, value: line.slice(colon + 1).trim() } : null;
 }

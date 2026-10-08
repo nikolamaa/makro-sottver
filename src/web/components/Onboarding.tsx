@@ -8,7 +8,6 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
-import { useHotkeys } from '../hotkeys';
 import { useStore } from '../store';
 import { Button, Modal, Spinner, toast } from '../ui';
 import { RecoveryKeyDisplay } from './settings/RecoveryKeyDisplay';
@@ -90,12 +89,9 @@ export function Onboarding() {
     }
   }, [saved, busy]);
 
-  const open = recoveryKey !== null;
-  useHotkeys(open ? { 'mod+enter': () => void acknowledge() } : {}, [open, acknowledge]);
-
   return (
     <Modal
-      open={open}
+      open={recoveryKey !== null}
       title="Save your recovery key"
       onClose={remindLater}
       footer={
@@ -107,7 +103,6 @@ export function Onboarding() {
             variant="primary"
             onClick={() => void acknowledge()}
             disabled={!saved || busy}
-            hotkey={saved ? 'mod+enter' : undefined}
           >
             {busy ? <Spinner label="Saving" /> : null}
             Continue

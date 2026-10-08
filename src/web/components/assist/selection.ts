@@ -1,9 +1,9 @@
 /**
  * Recommendation selection rules (pure). The selection is an ordered list of macro ids: the first one is the
- * primary macro, further ids are combined into the same reply in that order. Each function returns the new
- * selection, or null when the request changes nothing.
+ * primary macro, further ids are combined into the same reply in that order. The select/toggle/step functions
+ * return the new selection, or null when the request changes nothing.
  */
-import type { Id } from '../../../shared/types';
+import type { Id, Intent, RecommendResponse } from '../../../shared/types';
 
 /** Maximum number of macros combined into one reply (server limit). */
 export const MAX_COMBINE = 3;
@@ -38,4 +38,13 @@ export function stepSelection(current: readonly Id[], recIds: readonly Id[], del
   const at = current[0] === undefined ? -1 : recIds.indexOf(current[0]);
   const target = at < 0 ? (delta > 0 ? 0 : recIds.length - 1) : Math.max(0, Math.min(recIds.length - 1, at + delta));
   return selectOnly(current, recIds, target);
+}
+
+/** Intents the customer asked about that none of the selected macros cover, with the card that covers them. */
+export function uncoveredHint(result: RecommendResponse, selectedIds: readonly Id[]): { intents: Intent[]; coverRank: number } {
+  const recs = result.recommendations;
+  const covered = new Set(recs.filter((r) => selectedIds.includes(r.macroId)).flatMap((r) => r.coversIntents));
+  const intents = result.uncoveredIntents.filter((i) => !covered.has(i));
+  const coverRank = recs.findIndex((r) => !selectedIds.includes(r.macroId) && r.coversIntents.some((i) => intents.includes(i)));
+  return { intents, coverRank };
 }

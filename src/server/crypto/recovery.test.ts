@@ -74,6 +74,12 @@ describe('normalizeRecoveryKey', () => {
     ['spaces instead of dashes', key.replaceAll('-', ' ')],
     ['surrounding whitespace and extra separators', `  ${key.replaceAll('-', ' - ')}\n`],
     ['prefix without dash', key.replace('MPRK-', 'MPRK')],
+    ['en dashes (word-processor autocorrect)', key.replaceAll('-', '\u2013')],
+    ['em dashes', key.replaceAll('-', '\u2014')],
+    ['non-breaking hyphens', key.replaceAll('-', '\u2011')],
+    ['minus signs', key.replaceAll('-', '\u2212')],
+    ['non-breaking spaces', key.replaceAll('-', '\u00a0')],
+    ['zero-width spaces and soft hyphens from a copied web page', key.replaceAll('-', '\u200b').replace('7Q2M', '7Q\u00ad2M')],
   ])('accepts %s', (_label, input) => {
     expect(normalizeRecoveryKey(input)).toBe(key);
   });
@@ -92,6 +98,7 @@ describe('normalizeRecoveryKey', () => {
     ['a wrong prefix', key.replace('MPRK', 'ABCD')],
     ['an empty string', ''],
     ['only separators', ' - - '],
+    ['underscores as separators', key.replaceAll('-', '_')],
   ])('rejects %s', (_label, input) => {
     expect(() => normalizeRecoveryKey(input)).toThrow(new Error('Invalid recovery key format'));
   });
@@ -182,6 +189,8 @@ describe('isWrappedKey', () => {
     ['N not a power of two', { N: 30000 }],
     ['N too large (DoS)', { N: 2 ** 24 }],
     ['parameters needing more than 64 MiB', { N: 2 ** 16, r: 8 }],
+    ['N not below 2^(16r), which OpenSSL refuses', { N: 2 ** 16, r: 1 }],
+    ['N far above 2^(16r)', { N: 2 ** 18, r: 1, p: 1 }],
     ['too many parallel lanes', { p: 64 }],
     ['fractional r', { r: 8.5 }],
     ['short salt', { salt: randomBytes(8).toString('base64') }],
@@ -198,5 +207,14 @@ describe('isWrappedKey', () => {
   it('unwrapMasterKey refuses structurally invalid input without running scrypt', () => {
     const hostile = { ...valid, N: 2 ** 30 } as WrappedKey;
     expect(() => unwrapMasterKey(hostile, recoveryKey)).toThrow(new Error('Invalid wrapped key'));
+  });
+
+  it('never surfaces a raw OpenSSL error for parameters it accepts or rejects', () => {
+    // N=2^16, r=1 fits in memory but OpenSSL refuses it ("Invalid scrypt params ...").
+    expect(() => unwrapMasterKey({ ...valid, N: 2 ** 16, r: 1 }, recoveryKey)).toThrow(new Error('Invalid wrapped key'));
+    // The largest accepted N for r=1 really runs scrypt; the mismatch is then reported as a wrong key.
+    const edge = { ...valid, N: 2 ** 15, r: 1, p: 4 };
+    expect(isWrappedKey(edge)).toBe(true);
+    expect(() => unwrapMasterKey(edge, recoveryKey)).toThrow(new Error('Invalid recovery key'));
   });
 });
