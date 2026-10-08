@@ -27,12 +27,25 @@ const ENTITY_VARIABLE: Partial<Record<EntityType, string>> = {
   provider: 'provider',
 };
 
-/** Variable values detected in the message (first occurrence wins; crypto doubles as currency when no fiat). */
+const HAS_UPPERCASE = /\p{Lu}/u;
+const NAME_WORD_START = /(^|[\s'-])(\p{Ll})/gu;
+
+/** "john smith" -> "John Smith"; names that already contain a capital letter are kept (as the server does). */
+function displayName(name: string): string {
+  return HAS_UPPERCASE.test(name) ? name : name.replace(NAME_WORD_START, (_m, sep: string, c: string) => sep + c.toUpperCase());
+}
+
+/**
+ * Variable values detected in the message, exactly as the server fills them: first occurrence by position wins,
+ * the name is capitalized for display, and crypto doubles as currency when no fiat currency was found.
+ */
 export function detectedVariables(entities: readonly Entity[]): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const e of entities) {
+  for (const e of [...entities].sort((a, b) => a.start - b.start)) {
     const key = ENTITY_VARIABLE[e.type];
-    if (key && out[key] === undefined) out[key] = e.value;
+    const value = (e.value || e.raw).trim();
+    if (!key || !value || out[key] !== undefined) continue;
+    out[key] = key === 'user' ? displayName(value) : value;
   }
   if (out.crypto !== undefined && out.currency === undefined) out.currency = out.crypto;
   return out;
