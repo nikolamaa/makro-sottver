@@ -53,8 +53,8 @@ export function buildLexicalQuery(message: string): LexicalQuery {
     corrections.set(term, stem(fixed));
     for (const id of conceptsOfTerm(fixed)) {
       const words = concepts.get(id);
-      if (!words) concepts.set(id, [token]);
-      else if (!words.includes(token)) words.push(token);
+      if (!words) concepts.set(id, [fixed]);
+      else if (!words.includes(fixed)) words.push(fixed);
     }
   }
 

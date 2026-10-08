@@ -7,6 +7,8 @@ import { describe, expect, it } from 'vitest';
 import type { Analysis, Intent, Macro, QuestionSpan } from '../../shared/types.js';
 import { createBuiltinEmbedder } from './embedder.js';
 import { MacroIndex } from './macroIndex.js';
+import { buildLexicalQuery } from './query.js';
+import { searchLexical } from './lexical.js';
 
 // ---------------------------------------------------------------------------
 // Fixture library
@@ -623,7 +625,9 @@ describe.runIf(process.env.DEBUG_SEARCH)('debug dump', () => {
     for (const l of all) {
       const res = await index.search(l.message, analysisOf(l.intents), { maxResults: 3, minConfidence: 45 });
       const ok = res.recommendations[0]?.macroId === l.expected ? 'OK ' : 'XX ';
-      rows.push(`${ok}${l.expected.padEnd(28)} "${l.message}"`);
+      const q = buildLexicalQuery(l.message);
+      const hits = searchLexical((index as any).state.lexical, q);
+      rows.push(`${ok}${l.expected.padEnd(28)} "${l.message}" maxBm25=${hits[0]?.score.toFixed(1)} n=${q.terms.length - q.expansions.size} top=${hits[0]?.id} 2nd=${hits[1]?.score.toFixed(1)}`);
       for (const r of res.recommendations) rows.push(`     ${r.macroId.padEnd(28)} ${String(r.confidence).padStart(3)} s=${r.breakdown.semantic} l=${r.breakdown.lexical} i=${r.breakdown.intent} | ${r.reason} [${r.matchedTerms.join(',')}]`);
     }
     console.log(rows.join('\n'));
