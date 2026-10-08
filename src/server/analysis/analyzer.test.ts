@@ -157,8 +157,9 @@ describe('splitQuestions', () => {
   it('splits inline numbered lists and understands curly apostrophes', () => {
     const q = splitQuestions('I have 3 questions. 1) how to change my email 2) where to find the vault 3) how do I enable 2fa');
     expect(q).toEqual([
-      { text: 'I have 3 questions. 1) how to change my email', intent: 'account_access' },
-      { text: 'where to find the vault 3) how do I enable 2fa', intent: 'account_security' },
+      { text: 'how to change my email', intent: 'account_access' },
+      { text: 'where to find the vault', intent: 'account_security' },
+      { text: 'how do I enable 2fa', intent: 'account_security' },
     ]);
     expect(splitQuestions('I can’t log in. Also, what’s the rakeback for Platinum?')).toEqual([
       { text: 'I can’t log in.', intent: 'account_access' },

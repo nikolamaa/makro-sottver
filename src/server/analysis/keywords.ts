@@ -126,7 +126,9 @@ export function isLikelyNonEnglish(text: string): boolean {
     if (NON_ASCII_LETTER_RE.test(w)) accented++;
   }
   const n = words.length;
-  if (n <= 2) return foreign > 0 && english === 0;
+  // Short messages: one known foreign word and no English word is enough ("Merhaba bonusum gelmedi").
+  if (n <= 4 && english === 0 && foreign > 0) return true;
+  if (n <= 2) return false;
   if (english / n >= 0.35) return false;
   if (foreign >= 2 && foreign > english) return true;
   if (accented / n >= 0.25 && english / n < 0.2) return true;

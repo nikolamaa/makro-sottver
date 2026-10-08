@@ -13,7 +13,7 @@
 import type { Intent, IntentScore, QuestionSpan } from '../../shared/types.js';
 import { prepare } from './concepts.js';
 import { scoreIntentsPrepared } from './intents.js';
-import { collapseWhitespace } from './text.js';
+import { collapseWhitespace, STOPWORDS } from './text.js';
 
 const MAX_QUESTIONS = 6;
 /** Bounds the work on pathological input (thousands of one-word lines); real messages have far fewer clauses. */
@@ -66,7 +66,7 @@ const REQUEST_RE =
 const ENDS_WITH_QUESTION_RE = /\?[\s\p{Extended_Pictographic}\u{FE0F}]*$/u;
 
 const CHATTER_RE =
-  /\b(?:hi+|hello+|hey+|yo|dear|good (?:morning|afternoon|evening|day|night)|greetings|thanks?|thank you|thx|tysm|ty|cheers|regards|best regards|kind regards|warm regards|best|sincerely|ok(?:ay)?|alright|sure|cool|great|perfect|noted|please|pls|plz|team|support|stake|guys|there|all|everyone|so much|very much|a lot|again|in advance|sir|madam|mate|bro|buddy|anyone|anybody|are you there|is anyone there|you there|waiting|for (?:your|the) help|appreciated?|much appreciated|have a (?:good|great|nice) (?:day|one))\b/giu;
+  /\b(?:hi+|hello+|hey+|yo|dear|good (?:morning|afternoon|evening|day|night)|greetings|thank you|thank u|thanks?|thx|tysm|ty|cheers|regards|best regards|kind regards|warm regards|best|sincerely|ok(?:ay)?|alright|sure|cool|great|perfect|noted|please|pls|plz|team|support|stake|guys|there|all|everyone|so much|very much|a lot|again|in advance|sir|madam|mate|bro|buddy|anyone|anybody|are you there|is anyone there|you there|waiting|for (?:your|the) help|appreciated?|much appreciated|have a (?:good|great|nice) (?:day|one))\b/giu;
 const NON_WORD_G_RE = /[^\p{L}\p{N}]+/gu;
 const CAPITALIZED_RE = /^\p{Lu}/u;
 
@@ -74,6 +74,11 @@ const CAPITALIZED_RE = /^\p{Lu}/u;
 interface Span {
   start: number;
   end: number;
+}
+
+/** A trimmed span; `listItem` when it started with a list marker ("- ", "2) ", "3. "). */
+interface ItemSpan extends Span {
+  listItem: boolean;
 }
 
 interface Segment extends Span {
@@ -86,6 +91,11 @@ interface Segment extends Span {
   /** Mentions a problem ("not", "still", "wrong", "rejected"...). */
   problem: boolean;
   newTopic: boolean;
+  /**
+   * Can only be read together with a neighbour: it refers back ("what does that mean?") or has no content of its
+   * own ("Can you check?", "any update?").
+   */
+  followUp: boolean;
 }
 
 interface Group extends Span {
@@ -98,16 +108,17 @@ interface Group extends Span {
 }
 
 /** Trimmed span of text[start, end), without a leading list marker; null when it has no letters. */
-function trimmedSpan(text: string, start: number, end: number): Span | null {
+function trimmedSpan(text: string, start: number, end: number): ItemSpan | null {
   const raw = text.slice(start, end);
-  const lead = raw.match(LEADING_SPACE_OR_MARKER_RE)?.[0].length ?? 0;
-  const body = raw.slice(lead).trimEnd();
-  return HAS_LETTER_RE.test(body) ? { start: start + lead, end: start + lead + body.length } : null;
+  const lead = raw.match(LEADING_SPACE_OR_MARKER_RE)?.[0] ?? '';
+  const body = raw.slice(lead.length).trimEnd();
+  if (!HAS_LETTER_RE.test(body)) return null;
+  return { start: start + lead.length, end: start + lead.length + body.length, listItem: lead.trim() !== '' };
 }
 
 /** Sentence spans: split on . ? ! … followed by whitespace (not inside decimals/URLs), and on newlines. */
-function sentenceSpans(text: string): Span[] {
-  const out: Span[] = [];
+function sentenceSpans(text: string): ItemSpan[] {
+  const out: ItemSpan[] = [];
   let last = 0;
   for (const m of text.matchAll(SENTENCE_BOUNDARY_RE)) {
     const at = m.index ?? 0;
@@ -122,20 +133,20 @@ function sentenceSpans(text: string): Span[] {
 }
 
 /** Split a sentence where a connector introduces a new question. */
-function clauseSpans(text: string, sentence: Span): (Span & { newTopic: boolean })[] {
+function clauseSpans(text: string, sentence: ItemSpan): (Span & { newTopic: boolean })[] {
   const s = text.slice(sentence.start, sentence.end);
   const parts: (Span & { newTopic: boolean })[] = [];
   let last = 0;
-  let newTopic = NEW_TOPIC_START_RE.test(s);
+  let newTopic = sentence.listItem || NEW_TOPIC_START_RE.test(s);
   for (const m of s.matchAll(CLAUSE_SPLIT_RE)) {
     const at = m.index ?? 0;
     const span = trimmedSpan(text, sentence.start + last, sentence.start + at);
-    if (span) parts.push({ ...span, newTopic });
+    if (span) parts.push({ start: span.start, end: span.end, newTopic });
     newTopic = NEW_TOPIC_CONNECTORS.has(collapseWhitespace((m[1] ?? m[2] ?? '').toLowerCase()));
     last = at + m[0].length;
   }
   const tail = trimmedSpan(text, sentence.start + last, sentence.end);
-  if (tail) parts.push({ ...tail, newTopic });
+  if (tail) parts.push({ start: tail.start, end: tail.end, newTopic });
   return parts;
 }
 
@@ -167,7 +178,26 @@ function toSegment(text: string, span: Span, newTopic: boolean): Segment {
     question: isQuestionOrRequest(p.norm),
     problem: PROBLEM_CUE_RE.test(p.norm),
     newTopic,
+    followUp: isFollowUp(p.norm),
   };
+}
+
+/** Words of a follow-up that carry no topic ("can you check asap", "any update on this?"). */
+const FOLLOW_UP_WORDS: ReadonlySet<string> = new Set(
+  `check checking help fix look respond reply answer update updates status asap urgent urgently possible soon quickly
+  quick sort resolve solve explain news eta long take takes taking mean means happening happened going wrong anyone
+  someone human agent question questions thing things few couple two three hurry done`.split(/\s+/),
+);
+const ANAPHORA_RE = /\b(?:it|this|that|these|those|they|them)\b/;
+const FOLLOW_UP_TOKEN_RE = /[a-z0-9]+(?:'[a-z]+)?/g;
+
+/** True when a clause refers back to something said before or has no topic words of its own. */
+function isFollowUp(norm: string): boolean {
+  if (ANAPHORA_RE.test(norm)) return true;
+  for (const m of norm.matchAll(FOLLOW_UP_TOKEN_RE)) {
+    if (!STOPWORDS.has(m[0]) && !FOLLOW_UP_WORDS.has(m[0])) return false;
+  }
+  return true;
 }
 
 /** A statement describing a problem with a clear topic ("my withdrawal is pending for 2 days"). */
@@ -190,16 +220,25 @@ function extend(g: Group, seg: Segment): void {
   g.topicScore = Math.max(g.topicScore, seg.topicScore);
 }
 
-/** Attach topic-less clauses to their neighbours and merge consecutive clauses about the same intent. */
+/**
+ * A segment that stands on its own: it has a topic, or it is a question with content of its own ("do you have a
+ * mobile app?") rather than a follow-up ("can you check?").
+ */
+function standsAlone(seg: Segment): boolean {
+  return seg.topic !== null || (seg.question && !seg.followUp);
+}
+
+/** Attach follow-ups and topic-less clauses to their neighbours and merge consecutive clauses about the same intent. */
 function groupSegments(segments: Segment[]): Group[] {
   const groups: Group[] = [];
-  /** Topic-less clauses before the first topic; they become part of the next group. */
+  /** Follow-up clauses before the first group; they become part of the next group. */
   let prefix: Group | undefined;
   for (const seg of segments) {
     const last = groups.at(-1);
-    if (last && !seg.newTopic && (seg.topic === null || seg.topic === last.topic)) {
+    const alone = standsAlone(seg);
+    if (last && !seg.newTopic && (!alone || (seg.topic !== null && seg.topic === last.topic))) {
       extend(last, seg);
-    } else if (seg.topic === null && !seg.newTopic) {
+    } else if (!alone && !seg.newTopic) {
       if (prefix) extend(prefix, seg);
       else prefix = groupOf(seg);
     } else if (prefix && !seg.newTopic) {
