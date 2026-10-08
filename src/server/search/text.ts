@@ -53,14 +53,14 @@ const GENERIC_WORDS: ReadonlySet<string> = new Set(
     'morning evening night ago since first last next new old same different other another many much more less ' +
     'lot lots bit way kind sort part instead else back maybe possible probably honestly basically guess idea ' +
     'question questions answer problem issue thanks lol omg btw ok okay yeah hey hi hello guys bro mate buddy friend ' +
-    'stake com www http https'
+    'com www http https'
   ).split(' '),
 );
 
 const GENERIC_SUFFIXES = ['s', 'es', 'd', 'ed', 'ing'] as const;
 
 /**
- * True for a lowercase word that carries no topic ("going", "takes", "yesterday", "stake"). Matches the word list
+ * True for a lowercase word that carries no topic ("going", "takes", "yesterday"). Matches the word list
  * and simple inflections of it; deliberately not the stem, which would also hit "weekly" (stem "week").
  */
 export function isGenericWord(word: string): boolean {

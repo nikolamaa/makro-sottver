@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { indexTermForms, isNoiseToken, stem, stripTemplateVariables, tokenize } from './text.js';
+import { indexTermForms, isGenericWord, isNoiseToken, stem, stripTemplateVariables, tokenize } from './text.js';
 
 describe('tokenize', () => {
   it('lowercases, splits on punctuation and drops apostrophes inside words', () => {
@@ -8,6 +8,18 @@ describe('tokenize', () => {
 
   it('keeps non-latin letters and digits together', () => {
     expect(tokenize('2FA código trc20')).toEqual(['2fa', 'código', 'trc20']);
+  });
+});
+
+describe('isGenericWord', () => {
+  it('flags topic-free content words and their inflections', () => {
+    for (const w of ['going', 'take', 'takes', 'yesterday', 'weeks', 'forever', 'actually', 'problems']) expect(isGenericWord(w), w).toBe(true);
+  });
+
+  it('keeps domain words, including ones whose stem is generic', () => {
+    // "weekly" stems to "week" but is the weekly bonus.
+    // "stake" is also the bet amount; brand names are filtered by library frequency instead (ranker.ts).
+    for (const w of ['weekly', 'withdrawal', 'bonus', 'streak', 'wallet', 'email', 'house', 'party', 'stake']) expect(isGenericWord(w), w).toBe(false);
   });
 });
 

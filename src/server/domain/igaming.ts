@@ -52,15 +52,15 @@ export type Product = 'sports' | 'casino' | 'poker';
 
 /**
  * Unambiguous words for each product, used by search to detect product mismatch (a tennis betting-limit question
- * vs a casino-only macro). Deliberately strict: "game", "bet", "match", "crash" and "cash out" are left out
- * because they are used for several products (or for technical problems / withdrawals). Lowercase; multi-word
- * phrases allowed. The sports names mirror the analyzer's sports evidence (analysis/intents.ts).
+ * vs a casino-only macro). Deliberately strict: "game", "bet", "match", "goal", "crash" and "cash out" are left
+ * out because they are used for several products, in everyday English or for technical problems / withdrawals.
+ * Lowercase; multi-word phrases allowed. The sports names mirror the analyzer's sports evidence (analysis/intents.ts).
  */
 export const PRODUCT_TERMS: Record<Product, string[]> = {
   sports: [
     'sport', 'sports', 'sportsbook', 'sports bet', 'sports bets', 'bet slip', 'betslip', 'parlay', 'parlays', 'multi', 'multis',
     'multi bet', 'same game multi', 'sgm', 'accumulator', 'acca', 'leg', 'legs', 'handicap', 'asian handicap', 'over under',
-    'asian total', 'player prop', 'player props', 'prop bet', 'prop bets', 'live bet', 'fixture', 'goal', 'goals',
+    'asian total', 'player prop', 'player props', 'prop bet', 'prop bets', 'live bet', 'fixture',
     'football', 'soccer', 'tennis', 'basketball', 'baseball', 'hockey', 'cricket', 'rugby', 'golf', 'boxing', 'ufc', 'mma',
     'nba', 'nfl', 'nhl', 'mlb', 'esports', 'e-sports', 'cs2', 'csgo', 'dota', 'valorant', 'horse racing', 'formula 1', 'f1',
     'premier league', 'champions league', 'la liga', 'serie a', 'bundesliga', 'world cup',

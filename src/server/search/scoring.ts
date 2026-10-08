@@ -1,9 +1,14 @@
 /**
  * Score components and confidence calibration for macro recommendations.
  *
- * combined = 0.42*semantic + 0.30*lexical + 0.22*intent + 0.06*usage   (all components 0..1)
+ * combined = (0.42*semantic + 0.30*lexical + 0.22*intent + 0.06*usage) * relevanceFactor   (components 0..1)
  * confidence = logistic(combined), calibrated on the labeled fixture set in macroIndex.accuracy.test.ts so that
  * clear matches land around 75-95, partial matches 45-70 and unrelated messages below 35.
+ *
+ * The relevance factor (see signals.ts) handles two near-topic cases the components cannot see: a macro specific to
+ * another product (casino vs sports vs poker) than the one the customer names, and missing/pending macros for money
+ * the customer says already arrived. It is multiplicative rather than a logistic recalibration, so clear matches
+ * keep their confidence.
  */
 import type { Analysis, EmbedderStatus, Intent, ScoreBreakdown } from '../../shared/types.js';
 
@@ -33,19 +38,20 @@ export const CONFIDENCE_MIDPOINT = 0.45;
 export const CONFIDENCE_SLOPE = 6.5;
 
 /**
- * Relevance adjustments, multiplied into the combined score (so they affect both rank and confidence):
- * a macro covering share `c` (0..1, concept-IDF weighted) of the best-matching question's domain concepts keeps
- * 1 - COVERAGE_WEIGHT * (1 - c); a macro specific to another product (casino vs sports vs poker) than the one the
- * customer names keeps PRODUCT_MISMATCH_FACTOR; a missing-deposit / pending-withdrawal macro keeps RESOLVED_FACTOR
- * when the customer says that money already arrived.
+ * Relevance adjustments, multiplied into the combined score (so they affect both rank and confidence): a macro
+ * specific to another product (casino vs sports vs poker) than the one the customer names keeps
+ * PRODUCT_MISMATCH_FACTOR; a missing-deposit / pending-withdrawal macro keeps RESOLVED_FACTOR when the customer says
+ * that money already arrived.
+ *
+ * There is deliberately no "concept coverage" penalty (share of the question's domain concepts the macro mentions):
+ * it was tried, and on blind holdout sets it penalized correct macros (customers' state words such as "disappeared",
+ * "froze" or "app" that the right macro does not repeat) at least as often as the top macro of unanswerable
+ * messages, so it did not generalize.
  */
-export const COVERAGE_WEIGHT = 0.6;
-export const PRODUCT_MISMATCH_FACTOR = 0.6;
+export const PRODUCT_MISMATCH_FACTOR = 0.5;
 export const RESOLVED_FACTOR = 0.7;
 
 export interface RelevanceSignals {
-  /** 0..1 share of the question's domain concepts the macro covers (1 = all, or nothing to check). */
-  coverage: number;
   productMismatch: boolean;
   /** The macro is about a missing/pending money flow the customer reports as resolved. */
   resolvedConflict: boolean;
@@ -53,15 +59,10 @@ export interface RelevanceSignals {
 
 /** Multiplier (0..1] applied to the combined score for the relevance signals. */
 export function relevanceFactor(s: RelevanceSignals): number {
-  let f = 1 - COVERAGE_WEIGHT * (1 - clamp01(s.coverage));
+  let f = 1;
   if (s.productMismatch) f *= PRODUCT_MISMATCH_FACTOR;
   if (s.resolvedConflict) f *= RESOLVED_FACTOR;
   return f;
-}
-
-/** BM25-style inverse document frequency of a feature present in `df` of `n` macros (>= 0). */
-export function idf(df: number, n: number): number {
-  return Math.log(1 + (Math.max(0, n - df) + 0.5) / (Math.max(0, df) + 0.5));
 }
 
 /** Minimum analysis score for an intent to count as "asked" (diversification, uncovered intents). */

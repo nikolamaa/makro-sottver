@@ -377,3 +377,102 @@ describe('MacroIndex recommendations', () => {
     expect(res.recommendations[0]?.matchedTerms).toEqual(expect.arrayContaining(['cash out', 'withdrawal']));
   });
 });
+
+describe('MacroIndex relevance signals', () => {
+  const casinoLimits = macro(
+    'casino-limits',
+    'Casino betting limits (max bet)',
+    ['betting_limits', 'casino_games'],
+    'Hi {{user}}, the maximum bet on Stake Originals such as dice and plinko is set per currency. Third-party slots show their max bet in the game menu.',
+    { triggers: ['whats the max bet on dice', 'is there a max bet limit on slots'] },
+  );
+  const depositMissing = macro(
+    'dep-missing',
+    'Crypto deposit not credited',
+    ['deposit_missing'],
+    'Hi {{user}}, crypto deposits need network confirmations before they reach your balance. How long it takes depends on the network; please send the tx hash of your {{crypto}} deposit.',
+    { triggers: ['my btc deposit is not showing', 'how long does a crypto deposit take'] },
+  );
+  const withdrawalPending = macro(
+    'wd-pending',
+    'Crypto withdrawal pending',
+    ['withdrawal_pending'],
+    'Hi {{user}}, your {{crypto}} withdrawal is pending and will be processed shortly. Whats going on: large withdrawals take a manual check.',
+    { triggers: ['my btc withdrawal is still pending', 'whats going on with my withdrawal, it takes forever'] },
+  );
+  const weeklyBonus = macro(
+    'weekly',
+    'Weekly bonus: when it is sent',
+    ['bonus_inquiry'],
+    'Hi {{user}}, the weekly bonus is sent every Saturday (sometimes delayed by a few minutes) and credited in the coin you choose. You can withdraw it right away.',
+    { triggers: ['when is the weekly bonus sent', 'where do i get the weekly bonus'] },
+  );
+  const library = [casinoLimits, depositMissing, withdrawalPending, weeklyBonus];
+
+  async function search(message: string, analysis: Analysis) {
+    const index = new MacroIndex({ embedder: createBuiltinEmbedder() });
+    await index.rebuild(library, keyOf);
+    return index.search(message, analysis, OPTS);
+  }
+
+  it('flags a macro for another product as no good match and says why', async () => {
+    const res = await search('can you raise my max bet limit on tennis?', analysisOf([['betting_limits', 0.8]]));
+    const best = res.recommendations[0]!;
+    expect(best.macroId).toBe('casino-limits');
+    expect(best.confidence).toBeLessThan(45);
+    expect(res.noGoodMatch).toBe(true);
+    expect(best.reason).toMatch(/, but it is about casino, not sports\.$/);
+
+    const casino = await search('whats the max bet limit on dice?', analysisOf([['betting_limits', 0.8]]));
+    expect(casino.recommendations[0]).toMatchObject({ macroId: 'casino-limits' });
+    expect(casino.recommendations[0]!.confidence).toBeGreaterThanOrEqual(45);
+    expect(casino.recommendations[0]!.reason).not.toMatch(/not sports/);
+  });
+
+  it('does not boost a missing-deposit macro when the customer says the deposit arrived', async () => {
+    const analysis: Analysis = { ...analysisOf([['deposit_missing', 0.6]]), questions: [{ text: 'how long does swapping it to ltc take?', intent: 'deposit_missing' }] };
+    const resolved = await search('thanks, my btc deposit arrived! how long does swapping it to ltc take?', analysis);
+    const open = await search('my btc deposit has not arrived! how long does swapping it to ltc take?', analysis);
+    const dep = resolved.recommendations.find((r) => r.macroId === 'dep-missing')!;
+    const control = open.recommendations.find((r) => r.macroId === 'dep-missing')!;
+    expect(control.breakdown.intent).toBe(0.6);
+    expect(dep.breakdown.intent).toBe(0);
+    expect(dep.coversIntents).toEqual([]);
+    expect(dep.confidence).toBeLessThanOrEqual(control.confidence - 25);
+    expect(dep.reason).toMatch(/the customer says the deposit already arrived\.$/);
+    expect(dep.matchedTerms).not.toContain('deposit');
+    expect(control.matchedTerms).toContain('deposit');
+    expect(resolved.uncoveredIntents).not.toContain('deposit_missing');
+  });
+
+  it('explains each macro of a multi-question message with the words of its own question', async () => {
+    const message = 'my btc withdrawal is pending for 3 hours. also when is the weekly bonus sent?';
+    const analysis: Analysis = {
+      ...analysisOf([
+        ['withdrawal_pending', 0.8],
+        ['bonus_inquiry', 0.6],
+      ]),
+      questions: [
+        { text: 'my btc withdrawal is pending for 3 hours.', intent: 'withdrawal_pending' },
+        { text: 'also when is the weekly bonus sent?', intent: 'bonus_inquiry' },
+      ],
+    };
+    const res = await search(message, analysis);
+    const [first, second] = res.recommendations;
+    expect(first).toMatchObject({ macroId: 'wd-pending' });
+    expect(first!.matchedTerms).toEqual(expect.arrayContaining(['BTC', 'withdrawal', 'pending']));
+    expect(second).toMatchObject({ macroId: 'weekly' });
+    expect(second!.matchedTerms).toEqual(expect.arrayContaining(['weekly', 'bonus']));
+    // The weekly-bonus body mentions "coin", "delayed" and "withdraw", but those words answer the other question.
+    for (const term of ['BTC', 'withdrawal', 'pending', 'hours']) expect(second!.matchedTerms).not.toContain(term);
+    expect(second!.reason).toMatch(/^Matches the bonus inquiry question \(weekly, bonus/);
+  });
+
+  it('never shows generic words as matched terms', async () => {
+    const res = await search("whats going on with my withdrawal, it takes forever and it's still pending", analysisOf([['withdrawal_pending', 0.8]]));
+    const best = res.recommendations[0]!;
+    expect(best.macroId).toBe('wd-pending');
+    expect(best.matchedTerms).toEqual(expect.arrayContaining(['withdrawal', 'pending']));
+    for (const generic of ['going', 'takes', 'forever', 'whats']) expect(best.matchedTerms).not.toContain(generic);
+  });
+});

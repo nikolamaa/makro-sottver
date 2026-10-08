@@ -45,15 +45,9 @@ export interface ReasonInput {
 
 /**
  * - resolved: the macro is about a missing/pending money flow that the customer says already arrived;
- * - product: the macro is specific to another product than the one the customer names;
- * - uncovered: the customer's words for what the question asks that the macro does not mention.
+ * - product: the macro is specific to another product than the one the customer names.
  */
-export type ReasonCaveat =
-  | { kind: 'resolved'; flow: 'deposit' | 'withdrawal' }
-  | { kind: 'product'; asked: readonly Product[]; macro: readonly Product[] }
-  | { kind: 'uncovered'; words: readonly string[] };
-
-const MAX_CAVEAT_WORDS = 2;
+export type ReasonCaveat = { kind: 'resolved'; flow: 'deposit' | 'withdrawal' } | { kind: 'product'; asked: readonly Product[]; macro: readonly Product[] };
 
 function joinWithOr(parts: readonly string[]): string {
   if (parts.length <= 1) return parts.join('');
@@ -61,14 +55,12 @@ function joinWithOr(parts: readonly string[]): string {
 }
 
 /** Caveat clause without connector, e.g. "it is about casino, not sports". */
-function caveatText(caveat: ReasonCaveat, words: number): string {
+function caveatText(caveat: ReasonCaveat): string {
   switch (caveat.kind) {
     case 'resolved':
       return `the customer says the ${caveat.flow} already arrived`;
     case 'product':
       return `it is about ${joinWithAnd([...caveat.macro])}, not ${joinWithOr(caveat.asked)}`;
-    case 'uncovered':
-      return `it does not mention ${joinWithOr(caveat.words.slice(0, words).map((w) => `"${displayTerm(w)}"`))}`;
   }
 }
 
@@ -111,16 +103,14 @@ function caveatTail(verification: VerificationStatus, hasFacts: boolean): string
 
 /**
  * One deterministic sentence (<= 160 chars) explaining why a macro was recommended. When it is too long, matched
- * terms are dropped first, then caveat words, then the caveat.
+ * terms are dropped first, then the caveat.
  */
 export function buildReason(input: ReasonInput): string {
   const main = mainClause(input);
   const terms = input.matchedTerms.slice(0, MAX_REASON_TERMS);
   const caveat = input.caveat ?? null;
   const connector = main.includes(' but ') ? '; ' : ', but ';
-  const caveatWords = caveat?.kind === 'uncovered' ? Math.min(MAX_CAVEAT_WORDS, caveat.words.length) : 1;
-  for (let w = caveat ? caveatWords : 0; w >= 0; w--) {
-    const withCaveat = caveat && w > 0 ? `${connector}${caveatText(caveat, w)}` : '';
+  for (const withCaveat of caveat ? [`${connector}${caveatText(caveat)}`, ''] : ['']) {
     const tail = withCaveat ? caveatTail(input.verification, input.hasFacts) : verificationClause(input.verification, input.hasFacts);
     for (let n = terms.length; n >= 0; n--) {
       const withTerms = n > 0 ? `${main} (${terms.slice(0, n).join(', ')})` : main;

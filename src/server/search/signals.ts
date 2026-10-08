@@ -2,8 +2,8 @@
  * Message-level relevance signals applied on top of the hybrid score (see ranker.ts / scoring.ts):
  *
  *  - Question focus: the domain concepts (iGaming vocabulary) and terms of the whole message and of each question
- *    span, so a macro can be checked for how much of a question it covers. Coverage is measured per question, so a
- *    macro that fully answers one question of a multi-question message is not penalized for the others.
+ *    span. Explanations use it to tell which question of a multi-question message a macro answers, so matched terms
+ *    come from that question only.
  *  - Products (sports / casino / poker) the customer mentions, to detect a mismatch with a macro that is specific
  *    to another product ("max bet on tennis" vs a casino betting-limits macro).
  *  - Money flows the customer says are already resolved ("thanks, deposit arrived!"): they must not boost macros
@@ -18,14 +18,6 @@ import { isGenericWord, isNoiseToken, stem, tokenize } from './text.js';
 
 /** Concepts present in nearly every conversation ("today", "account", "ridiculous"); they identify no macro. */
 export const GENERIC_CONCEPTS: ReadonlySet<string> = new Set(['time', 'account', 'complaint']);
-
-/**
- * Concepts that qualify what a question is about rather than name it: payment channel (crypto, fiat, network) and
- * state (missing, pending, limit). Customers mention them in passing ("my wallet", "where is my", "how long"), so
- * a macro that does not mention them is less likely to be off-topic than one missing a subject concept.
- */
-export const MODIFIER_CONCEPTS: ReadonlySet<string> = new Set(['crypto', 'fiat', 'network', 'missing', 'pending', 'limit']);
-export const MODIFIER_CONCEPT_WEIGHT = 0.5;
 
 export type MoneyFlow = 'deposit' | 'withdrawal';
 
@@ -106,30 +98,40 @@ export function contentTerms(text: string): Set<string> {
 
 /** Clauses: text between sentence punctuation, commas, semicolons, newlines and "but". */
 const CLAUSE_RE = /[^.!?;,\n]+[.!?;,\n]*/g;
-const BUT_SPLIT_RE = /\s+(?:but|however|though)\s+/;
-/** The flow happened: "arrived", "came through", "got credited", "received it", "is in my balance now". */
+const BUT_SPLIT_RE = /\s+(?:but|however|though)\s+/i;
+const TRAILING_PUNCTUATION_RE = /[.!?;,\n]+$/;
+/** The flow happened: "arrived", "came through", "got credited", "received it", "got my withdrawal". */
 const RESOLVED_RE =
-  /\b(?:arrived|came (?:through|in)|went through|(?:got|been|was|is|now|finally|already) credited|credited now|showed up|shows? up now|landed|cleared|(?:already |finally )?received (?:it|them|my|the)|(?:got|received) it|is (?:there|in my (?:balance|wallet|account)) now|all good now)\b/;
-/** Negation, doubt or a question word anywhere in the clause cancels the resolution ("hasn't arrived", "when ..."). */
+  /\b(?:arrived|came (?:through|in)|went through|(?:got|been|was|is|now|finally|already) credited|credited now|showed up|shows? up now|landed|cleared|(?:already |finally )?received (?:it|them|my|the)|(?:got|received) it|got (?:my|the) (?:deposit|withdrawal|money|funds|payout|cashout|coins?|crypto)|is (?:there|in my (?:balance|wallet|account)) now|all good now)\b/;
+/**
+ * Negation, a problem, doubt or a question word anywhere in the clause cancels the resolution ("hasn't arrived",
+ * "got my withdrawal denied", "when ...").
+ */
 const UNRESOLVED_RE =
-  /\b(?:not|no|never|nothing|nowhere|still|yet|cant|cannot|didnt|doesnt|hasnt|havent|isnt|wasnt|wont|where|when|why|how|if|whether|only|half|partially|part)\b/;
+  /\b(?:not|no|never|nothing|nowhere|still|yet|cant|cannot|didnt|doesnt|hasnt|havent|isnt|wasnt|wont|where|when|why|how|if|whether|only|half|partially|part|less|short|wrong|missing|lost|pending|stuck|denied|rejected|declined|cancell?ed|reversed|returned)\b/;
 const QUESTION_LEAD_RE = /^\s*(?:has|have|had|did|does|do|is|was|will|would|should|can|could)\b/;
 
 interface Clause {
+  /** Original text of the clause. */
   text: string;
   resolved: boolean;
 }
 
+/** True when a clause reports that money arrived, without negation, doubt or a question. */
+function isResolvedClause(text: string, question: boolean): boolean {
+  if (question) return false;
+  const norm = text.toLowerCase().replace(/[’‘`]/g, "'").replace(/n't\b/g, 'nt');
+  return RESOLVED_RE.test(norm) && !UNRESOLVED_RE.test(norm) && !QUESTION_LEAD_RE.test(norm);
+}
+
 function clausesOf(message: string): Clause[] {
   const out: Clause[] = [];
-  for (const m of message.toLowerCase().replace(/[’‘`]/g, "'").replace(/n't\b/g, 'nt').matchAll(CLAUSE_RE)) {
+  for (const m of message.matchAll(CLAUSE_RE)) {
     const raw = m[0];
     const question = raw.includes('?');
     for (const part of raw.split(BUT_SPLIT_RE)) {
-      const text = part.replace(/[.!?;,\n]+$/, '').trim();
-      if (!text) continue;
-      const resolved = !question && RESOLVED_RE.test(text) && !UNRESOLVED_RE.test(text) && !QUESTION_LEAD_RE.test(text);
-      out.push({ text, resolved });
+      const text = part.replace(TRAILING_PUNCTUATION_RE, '').trim();
+      if (text) out.push({ text, resolved: isResolvedClause(text, question) });
     }
   }
   return out;
@@ -175,33 +177,6 @@ export function messageSignals(message: string, analysis: Pick<Analysis, 'questi
     for (const q of analysis.questions) questions.push({ intent: q.intent, concepts: conceptIdsOf(q.text), terms: contentTerms(q.text) });
   }
   return { questions, products: productsOf(openText), resolved, resolvedTerms };
-}
-
-/**
- * Share (0..1) of a question's domain concepts that the macro mentions, weighted by `weight` (concept IDF), for the
- * question the macro covers best. Only partial coverage is evidence of a near-topic mismatch ("stake shield" on a
- * multi-bet macro): a question whose concepts the macro does not mention at all says more about the vocabulary
- * missing the customer's wording ("lost way too much" read as a missing payment) than about the macro, and lexical,
- * semantic and intent scores already handle unrelated macros. So such questions are skipped, and the result is 1
- * when no question is partially covered (nothing to check).
- */
-export function conceptCoverage(
-  questions: readonly QuestionFocus[],
-  macroConcepts: ReadonlySet<string>,
-  weight: (concept: string) => number,
-): number {
-  let best = -1;
-  for (const q of questions) {
-    let total = 0;
-    let covered = 0;
-    for (const c of q.concepts) {
-      const w = weight(c);
-      total += w;
-      if (macroConcepts.has(c)) covered += w;
-    }
-    if (covered > 0) best = Math.max(best, covered / total);
-  }
-  return best < 0 ? 1 : best;
 }
 
 /** True when the message names products and the macro is specific to other products only. */

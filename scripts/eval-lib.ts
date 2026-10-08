@@ -1,7 +1,8 @@
 /**
  * Recommendation quality evaluation: loads the demo library (seed/stake-demo-macros.json) and a labeled set of
- * customer messages (default seed/eval-messages.json; the blind holdout set is seed/eval-holdout.json), runs the
- * real analyzer + hybrid index, and reports accuracy, "no good match" calibration and latency.
+ * customer messages (default seed/eval-messages.json, used for tuning; blind holdout sets: seed/eval-holdout.json
+ * and seed/eval-holdout-2.json, written by an independent evaluator and never used for tuning), runs the real
+ * analyzer + hybrid index, and reports accuracy, "no good match" calibration and latency.
  */
 import { readFileSync } from 'node:fs';
 import { performance } from 'node:perf_hooks';
@@ -63,6 +64,7 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 
 export const EVAL_MESSAGES_FILE = `${root}seed/eval-messages.json`;
 export const HOLDOUT_MESSAGES_FILE = `${root}seed/eval-holdout.json`;
+export const HOLDOUT2_MESSAGES_FILE = `${root}seed/eval-holdout-2.json`;
 
 export function loadSeedMacros(file = `${root}seed/stake-demo-macros.json`): Macro[] {
   const preview = parseImport('json', readFileSync(file, 'utf8'), []);

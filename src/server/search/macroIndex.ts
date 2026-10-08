@@ -1,20 +1,20 @@
 /**
  * In-memory hybrid index over active macros: BM25/fuzzy lexical search (MiniSearch) + vector similarity
- * (Embedder) + intent match + usage prior. Everything lives in memory (decrypted), so search is ~ms.
+ * (Embedder) + intent match + usage prior, adjusted by message-level relevance signals (product mismatch,
+ * resolved money flows; see signals.ts). Everything lives in memory (decrypted), so search is ~ms.
  *
  * Consistency model: mutations that need embeddings (rebuild, upsert, setEmbedder) run one at a time in call
  * order and swap state in synchronously when done; remove() applies immediately and wins over any older
  * pending write of the same macro. Searches never wait for mutations.
  */
 import type { Analysis, Id, Intent, Macro, Recommendation } from '../../shared/types.js';
-import { listVariables } from '../../shared/template.js';
 import { INTENT_LABELS } from '../../shared/types.js';
 import { matchConcepts } from './concepts.js';
 import { createFallbackEmbedder, type Embedder } from './embedder.js';
 import { createLexicalIndex, searchLexical, toIndexDoc, type LexicalIndex } from './lexical.js';
 import { buildLexicalQuery } from './query.js';
 import { rankMacros, type IndexedMacro } from './ranker.js';
-import { macroProducts, messageSignals } from './signals.js';
+import { contentTerms, macroProducts, messageSignals } from './signals.js';
 import { stripTemplateVariables } from './text.js';
 
 export interface EmbeddingCache {
@@ -70,15 +70,16 @@ function bodyPassage(m: Macro): string {
 }
 
 /**
- * Concepts and products used by the relevance signals. `concepts` is what the macro says: title, triggers, tags,
- * body and the names of its template variables ({{bet_id}} -> "bet id": a macro that asks for the bet ID is about
- * bet IDs), but not its intent labels, which are scored by the intent component already. `headConcepts` (what the
- * macro is about, used for explanations) includes them.
+ * Features used by the relevance signals and explanations: `headConcepts` and `headTerms` (what the macro is about:
+ * title, triggers, intent labels, tags) explain matches and tell which question it answers; `products` detects a
+ * product mismatch.
  */
-function relevanceFeatures(m: Macro, head: string, body: string): Pick<IndexedMacro, 'concepts' | 'headConcepts' | 'products'> {
-  const variables = listVariables(m.body).map((v) => v.replace(/_/g, ' '));
-  const content = [m.title, ...m.triggers, ...m.tags, body, ...variables].join('\n');
-  return { concepts: new Set(matchConcepts(content).keys()), headConcepts: new Set(matchConcepts(head).keys()), products: macroProducts(m) };
+function relevanceFeatures(m: Macro, head: string): Pick<IndexedMacro, 'headConcepts' | 'headTerms' | 'products'> {
+  return {
+    headConcepts: new Set(matchConcepts(head).keys()),
+    headTerms: contentTerms(head),
+    products: macroProducts(m),
+  };
 }
 
 function errorMessage(err: unknown): string {
@@ -263,7 +264,7 @@ export class MacroIndex {
     for (const { macro, key } of items) {
       const head = headPassage(macro);
       const body = bodyPassage(macro);
-      const entry: Entry = { macro, key, head: null, body: null, ...relevanceFeatures(macro, head, body) };
+      const entry: Entry = { macro, key, head: null, body: null, ...relevanceFeatures(macro, head) };
       entries.push(entry);
       for (const [part, text] of [['head', head], ['body', body]] as const) {
         if (!text) continue;

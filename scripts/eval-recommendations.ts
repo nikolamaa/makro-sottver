@@ -1,17 +1,25 @@
 /**
  * `npm run eval` - prints recommendation accuracy on the labeled demo messages (seed/eval-messages.json) and on
- * the blind holdout set (seed/eval-holdout.json).
- *   --verbose   list every miss
- *   --holdout   only the holdout set
- *   --tuning    only the original (tuning) set
- *   --reasons   print the top results with reasons and matched terms for every message
+ * the blind holdout sets (seed/eval-holdout.json, seed/eval-holdout-2.json).
+ *   --verbose    list every miss
+ *   --tuning     only the original (tuning) set
+ *   --holdout    only the first holdout set
+ *   --holdout2   only the second holdout set
+ *   --reasons    print the top results with reasons and matched terms for every message
+ * Set flags can be combined (--holdout --holdout2); without any, all three sets are evaluated.
  */
-import { EVAL_MESSAGES_FILE, HOLDOUT_MESSAGES_FILE, runEval, type EvalReport } from './eval-lib.js';
+import { EVAL_MESSAGES_FILE, HOLDOUT2_MESSAGES_FILE, HOLDOUT_MESSAGES_FILE, runEval, type EvalReport } from './eval-lib.js';
 
 const args = new Set(process.argv.slice(2));
 const verbose = args.has('--verbose');
 const showReasons = args.has('--reasons');
-const files = args.has('--holdout') ? [HOLDOUT_MESSAGES_FILE] : args.has('--tuning') ? [EVAL_MESSAGES_FILE] : [EVAL_MESSAGES_FILE, HOLDOUT_MESSAGES_FILE];
+const SETS: readonly (readonly [string, string])[] = [
+  ['--tuning', EVAL_MESSAGES_FILE],
+  ['--holdout', HOLDOUT_MESSAGES_FILE],
+  ['--holdout2', HOLDOUT2_MESSAGES_FILE],
+];
+const selected = SETS.filter(([flag]) => args.has(flag)).map(([, file]) => file);
+const files = selected.length ? selected : SETS.map(([, file]) => file);
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 
 function print(r: EvalReport): void {

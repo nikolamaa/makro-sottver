@@ -8,6 +8,9 @@ import {
   isMultiTopic,
   lexicalScore,
   matchIntents,
+  PRODUCT_MISMATCH_FACTOR,
+  relevanceFactor,
+  RESOLVED_FACTOR,
   usageScore,
   wantedIntents,
 } from './scoring.js';
@@ -65,6 +68,27 @@ describe('score components', () => {
     expect(confidenceOf(0.45)).toBe(50);
     expect(confidenceOf(0.1)).toBeLessThan(15);
     for (let x = 0; x < 1; x += 0.05) expect(confidenceOf(x + 0.05)).toBeGreaterThanOrEqual(confidenceOf(x));
+  });
+});
+
+describe('relevance adjustments', () => {
+  const none = { productMismatch: false, resolvedConflict: false };
+
+  it('keeps product-compatible macros unchanged', () => {
+    expect(relevanceFactor(none)).toBe(1);
+  });
+
+  it('multiplies the mismatch factors', () => {
+    expect(relevanceFactor({ ...none, productMismatch: true })).toBe(PRODUCT_MISMATCH_FACTOR);
+    expect(relevanceFactor({ ...none, resolvedConflict: true })).toBe(RESOLVED_FACTOR);
+    expect(relevanceFactor({ productMismatch: true, resolvedConflict: true })).toBeCloseTo(PRODUCT_MISMATCH_FACTOR * RESOLVED_FACTOR, 10);
+  });
+
+  it('moves a clear match on another product into the "no good match" range', () => {
+    // A 90% match on a casino-only macro for a sports question: below the default 45% threshold.
+    const clear = 0.45 + Math.log(9) / 6.5;
+    expect(confidenceOf(clear)).toBe(90);
+    expect(confidenceOf(clear * relevanceFactor({ ...none, productMismatch: true }))).toBeLessThan(45);
   });
 });
 
