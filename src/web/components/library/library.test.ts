@@ -18,6 +18,7 @@ import {
 } from './model';
 import { EMPTY_FILTERS, buildHaystack, countLabel, filterAndSort, type MacroFilters } from './search';
 import { createUnsavedStash } from './stash';
+import { focusAfterModal, isModalOpen } from './Modals';
 
 function fact(over: Partial<Fact> = {}): Fact {
   return {
@@ -280,6 +281,21 @@ describe('library review fixes', () => {
     expect(dropBlankFact(facts, 'missing')).toBe(facts);
     const typed = patchFact(fresh, { key: 'kyc.time' });
     expect(dropBlankFact([existing, typed], typed.uid)).toHaveLength(2);
+  });
+
+  it('closing a dialog returns focus instead of dropping it on <body> (keyboard-first)', () => {
+    const list = { isConnected: true, name: 'list' };
+    const deleteButton = { isConnected: true, name: 'delete' };
+    // Cancel: back to the element focused before the dialog opened.
+    expect(focusAfterModal(deleteButton, true, list)).toBe(deleteButton);
+    // That element is gone (macro deleted): fall back to the macro list.
+    expect(focusAfterModal({ isConnected: false, name: 'gone' }, true, list)).toBe(list);
+    expect(focusAfterModal(null, true, list)).toBe(list);
+    // The dialog's action already focused something (e.g. the new macro's title): leave it alone.
+    expect(focusAfterModal(deleteButton, false, list)).toBeNull();
+    // Page left (navigation): nothing to focus.
+    expect(focusAfterModal(null, true, { isConnected: false, name: 'old list' })).toBeNull();
+    expect(isModalOpen()).toBe(false);
   });
 
   it('list footer pluralizes the total ("1 of 4 macros")', () => {
