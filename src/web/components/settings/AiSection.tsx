@@ -102,7 +102,7 @@ export function AiSection({
     <SectionCard
       id="st-ai"
       title="AI assistant"
-      description="Optional. MacroPilot works fully without AI - AI only polishes wording, adapts tone and merges answers for messages with several questions."
+      description="Optional. MacroPilot works fully without AI - AI only polishes wording, adapts tone, merges answers for messages with several questions and can double-check the recommendations."
     >
       <RadioCards name="ai-provider" label="AI provider" value={ai.provider} options={providerOptions} onChange={(provider) => update({ ai: { provider } })} />
 
@@ -135,6 +135,12 @@ export function AiSection({
             hint="Run AI personalization as soon as you pick a macro. Off: press the AI button only when you need it."
             checked={ai.autoPolish}
             onChange={(autoPolish) => update({ ai: { autoPolish } })}
+          />
+          <Toggle
+            label="AI double-check of recommendations"
+            hint="After the instant local match, AI re-scores the top candidates and explains the best fit (about $0.0002 per message with Claude Haiku)."
+            checked={ai.rerank}
+            onChange={(rerank) => update({ ai: { rerank } })}
           />
           <TestConnection whenSaved={whenSaved} />
         </div>
@@ -322,11 +328,11 @@ function OllamaSettings({ settings, update }: { settings: AppSettings; update: (
             <a href="https://ollama.com/download" target="_blank" rel="noreferrer noopener">
               ollama.com
             </a>
-            , then run <code className="st-code">ollama pull {ai.ollamaModel || 'qwen3:4b'}</code>
+            , then run <code className="st-code">ollama pull {ai.ollamaModel || 'qwen2.5:3b'}</code>
           </>
         }
       >
-        <TextSetting id="st-ollama-model" value={ai.ollamaModel} required mono placeholder="qwen3:4b" onCommit={(ollamaModel) => update({ ai: { ollamaModel } })} />
+        <TextSetting id="st-ollama-model" value={ai.ollamaModel} required mono placeholder="qwen2.5:3b" onCommit={(ollamaModel) => update({ ai: { ollamaModel } })} />
       </SettingRow>
     </div>
   );

@@ -2,6 +2,7 @@
  * Assist page controller: wires the pure reducer (assistState.ts) to the server and the browser.
  *
  *   message -> debounce 120 ms -> POST /api/recommend (previous request aborted) -> auto-select #1
+ *   shown result -> (AI ready + double-check on) -> POST /api/rerank -> AI scores in place, never reorders
  *   selection/variables -> POST /api/personalize (fast) -> editor -> optional AI polish
  *   copy -> placeholder guard -> clipboard -> usage event (+ background macro refresh)
  *
@@ -34,12 +35,18 @@ import {
 } from './clipboard';
 import { plural } from './format';
 import { useDebouncedValue } from './hooks';
+import { IDLE_RERANK } from './rerank';
 import { errorText, isAbortError, recordCopy, sendEvent } from './requests';
 import { MAX_COMBINE, selectOnly, stepSelection, toggleCombine } from './selection';
 import { selectNextPlaceholder } from './textSelection';
 import { requestVariables } from './variables';
 
 const RECOMMEND_DEBOUNCE_MS = 120;
+/**
+ * Pause after a local result before the AI double-check is requested, so typing a message by hand does not send
+ * one AI request per pause (each result arriving restarts the wait).
+ */
+export const RERANK_DELAY_MS = 600;
 const VARIABLES_DEBOUNCE_MS = 200;
 const NO_VARIABLES_KEY = '{}';
 
@@ -47,7 +54,10 @@ const NO_VARIABLES_KEY = '{}';
 let savedState: AssistState | null = null;
 
 function restoreState(): AssistState {
-  return savedState ? { ...savedState, busy: { ai: false, draft: false } } : INITIAL_ASSIST_STATE;
+  if (!savedState) return INITIAL_ASSIST_STATE;
+  // Requests do not survive leaving the page: a double-check that was running is started again.
+  const rerank = savedState.rerank.status === 'running' ? IDLE_RERANK : savedState.rerank;
+  return { ...savedState, busy: { ai: false, draft: false }, rerank };
 }
 
 function recIdsOf(result: RecommendResponse | null): Id[] {
@@ -119,6 +129,12 @@ export function createAssistActions(ctx: ActionContext) {
     ctx.messageEl.current?.focus();
   }
 
+  /** Use any macro for the current message (personalized like a recommendation), even if it was not recommended. */
+  function pickMacro(id: Id): void {
+    const s = current();
+    applySelection(selectOnly(s.selectedIds, [id], 0), recIdsOf(s.result).indexOf(id));
+  }
+
   /** Start a new conversation with `text` as the customer message. */
   function loadMessage(text: string): void {
     stopAi();
@@ -158,9 +174,11 @@ export function createAssistActions(ctx: ActionContext) {
       applySelection(next, next?.[0] ? recIds.indexOf(next[0]) : -1);
     },
     /** Use any macro (from quick search) for the current message, even if it was not recommended. */
-    pick(id: Id): void {
-      const s = current();
-      applySelection(selectOnly(s.selectedIds, [id], 0), recIdsOf(s.result).indexOf(id));
+    pick: pickMacro,
+    /** Use the AI double-check's top pick that is not among the cards (Alt+4). */
+    pickAiSuggestion(): void {
+      const { rerank, resultFor } = current();
+      if (rerank.suggestion && rerank.message === resultFor) pickMacro(rerank.suggestion.macroId);
     },
     edit(text: string): void {
       dispatch({ type: 'edit', text });
@@ -287,6 +305,56 @@ function useRecommendation(state: AssistState, dispatch: Dispatch<AssistAction>,
   }, [message, resultFor, dispatch, stateRef]);
 }
 
+/** True when the shown result should get an AI double-check (once per result; `enabled` = AI ready + setting on). */
+export function shouldRerank(state: Pick<AssistState, 'message' | 'result' | 'resultFor' | 'rerank'>, enabled: boolean): boolean {
+  const { message, result, resultFor, rerank } = state;
+  if (!enabled || !result?.recommendations.length || message !== resultFor) return false;
+  return !(rerank.message === resultFor && (rerank.status === 'done' || rerank.status === 'failed'));
+}
+
+/**
+ * Requests the AI double-check of the result for `message` after `delayMs`. Returns the cancel function: it
+ * aborts the request and reports a check that was still running as stopped. Failures are silent (no toast):
+ * the "AI checking" indicator just disappears and the local result stays as it is.
+ */
+export function scheduleRerank(message: string, dispatch: Dispatch<AssistAction>, delayMs = RERANK_DELAY_MS): () => void {
+  const ctrl = new AbortController();
+  let pending = false;
+  const timer = setTimeout(() => {
+    pending = true;
+    dispatch({ type: 'rerankStarted', message });
+    api('POST /api/rerank', { body: { message }, signal: ctrl.signal })
+      .then((res) => {
+        pending = false;
+        dispatch({ type: 'reranked', message, res });
+      })
+      .catch((err: unknown) => {
+        if (isAbortError(err)) return;
+        pending = false;
+        dispatch({ type: 'rerankFailed', message });
+      });
+  }, delayMs);
+  return () => {
+    clearTimeout(timer);
+    ctrl.abort();
+    if (pending) dispatch({ type: 'rerankStopped', message });
+  };
+}
+
+/**
+ * Optional AI double-check of the shown result while the AI is ready and the setting is on. Cancelled when the
+ * message, the result or the setting changes; late answers for an older result are ignored by the reducer.
+ */
+function useRerank(state: AssistState, dispatch: Dispatch<AssistAction>, stateRef: RefObject<AssistState>): void {
+  const enabled = useStore((s) => Boolean(s.health?.ai.ready && s.settings?.ai.rerank));
+  const { message, result, resultFor } = state;
+  useEffect(() => {
+    // The check's own progress is read from the ref so that its updates do not restart it.
+    if (!shouldRerank({ message, result, resultFor, rerank: stateRef.current.rerank }, enabled)) return;
+    return scheduleRerank(resultFor, dispatch);
+  }, [enabled, result, resultFor, message, dispatch, stateRef]);
+}
+
 /** Fast personalization whenever the selection, a selected macro, the message or (debounced) variables change. */
 function usePersonalization(state: AssistState, dispatch: Dispatch<AssistAction>, actions: AssistActions): boolean {
   const variablesJson = useMemo(() => JSON.stringify(requestVariables(state.customerName, state.overrides)), [state.customerName, state.overrides]);
@@ -395,6 +463,7 @@ export function useAssist(): AssistController {
   useEffect(() => actions.stopAi, [actions]);
 
   useRecommendation(state, dispatch, stateRef);
+  useRerank(state, dispatch, stateRef);
   const personalizing = usePersonalization(state, dispatch, actions);
   useClipboardIntake(actions, stateRef);
   useQuickSearchPick(actions);

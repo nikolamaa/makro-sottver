@@ -74,9 +74,10 @@ export class AssistService {
    * AI double-check of the recommendations: the local analysis + search over RERANK_CANDIDATES candidates, then the
    * AI re-scores them (AiService.rerank applies strict local mode, the budget and pseudonymization, and falls back
    * to the local candidates on any AI error). Returns the best settings.recommendation.maxResults. When the AI is
-   * not ready or ai.rerank is off, the local result is returned without calling it.
+   * not ready or ai.rerank is off, the local result is returned without calling it. `signal` (the browser dropped
+   * the request, e.g. because the message changed) cancels the AI call.
    */
-  async rerank(message: string): Promise<RerankResponse> {
+  async rerank(message: string, signal?: AbortSignal): Promise<RerankResponse> {
     const text = this.checkMessage(message);
     if (!text.trim()) return { recommendations: [], noGoodMatch: false, aiUsed: false, llm: null };
     const settings = this.settings();
@@ -89,14 +90,14 @@ export class AssistService {
       aiUsed: false,
       llm: null,
     };
-    if (!settings.ai.rerank || !local.recommendations.length || !this.ai.isReady()) return localResult;
+    if (!settings.ai.rerank || !local.recommendations.length || signal?.aborted || !this.ai.isReady()) return localResult;
 
     const macros = new Map<Id, Macro>();
     for (const rec of local.recommendations) {
       const macro = this.findMacro(rec.macroId);
       if (macro) macros.set(macro.id, macro);
     }
-    const ranked = await this.ai.rerank({ message: text, analysis, candidates: local.recommendations, macros });
+    const ranked = await this.ai.rerank({ message: text, analysis, candidates: local.recommendations, macros, signal });
     if (!ranked.aiUsed) return localResult;
     const recommendations = ranked.recommendations.slice(0, maxResults);
     return {

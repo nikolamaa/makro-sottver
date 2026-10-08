@@ -40,6 +40,9 @@ export function useAssistHotkeys(actions: AssistActions, refs: AssistHotkeyRefs,
   const keys = useMemo<HotkeyMap>(
     () => ({
       ...Object.fromEntries(RANKS.flatMap((i) => [[`alt+${i + 1}`, () => actions.select(i)], [`${i + 1}`, () => actions.select(i)]])),
+      // The AI double-check's suggestion when it is not among the cards (no-op otherwise).
+      'alt+4': actions.pickAiSuggestion,
+      '4': actions.pickAiSuggestion,
       'alt+arrowdown': () => actions.step(1),
       'alt+arrowup': () => actions.step(-1),
       'mod+enter': () => void actions.copy(),

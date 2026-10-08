@@ -25,9 +25,14 @@ export interface RerankState {
   suggestion: Recommendation | null;
   /** The AI finds no macro that fully answers the message, although the local match did. */
   noGoodMatch: boolean;
+  /**
+   * Lowest confidence in the AI answer (null without one). The answer holds the AI's best maxResults, so a card
+   * missing from it ranks below all of them: its local confidence is capped at this value.
+   */
+  floor: number | null;
 }
 
-export const IDLE_RERANK: RerankState = { message: '', status: 'idle', scores: {}, topId: null, suggestion: null, noGoodMatch: false };
+export const IDLE_RERANK: RerankState = { message: '', status: 'idle', scores: {}, topId: null, suggestion: null, noGoodMatch: false, floor: null };
 
 /** State after the AI answered for `message`, whose local result is `local`. */
 export function rerankOutcome(message: string, local: RecommendResponse, res: RerankResponse): RerankState {
@@ -46,6 +51,7 @@ export function rerankOutcome(message: string, local: RecommendResponse, res: Re
     topId: top?.macroId ?? null,
     suggestion: top && !shown.has(top.macroId) ? top : null,
     noGoodMatch: res.noGoodMatch && !local.noGoodMatch,
+    floor: res.recommendations.length ? Math.min(...res.recommendations.map((r) => r.confidence)) : null,
   };
 }
 
@@ -55,18 +61,20 @@ export interface ShownRecommendation {
   /** Confidence before the AI re-scored it (equals rec.confidence when it did not). */
   localConfidence: number;
   aiScored: boolean;
+  /** The AI ranked other macros above this card (it is not in the AI answer): confidence capped at the answer's lowest. */
+  aiLower: boolean;
   aiPick: boolean;
 }
 
 /** Cards in the local order (never reordered), with the AI scores of a finished double-check. */
 export function shownRecommendations(recs: readonly Recommendation[], rerank: RerankState): ShownRecommendation[] {
+  const { floor } = rerank;
   return recs.map((rec) => {
-    const ai = rerank.scores[rec.macroId];
-    return {
-      rec: ai ? { ...rec, confidence: ai.confidence, reason: ai.reason || rec.reason } : rec,
-      localConfidence: rec.confidence,
-      aiScored: ai !== undefined,
-      aiPick: rerank.topId === rec.macroId,
-    };
+    const ai = Object.hasOwn(rerank.scores, rec.macroId) ? rerank.scores[rec.macroId] : undefined;
+    const aiLower = !ai && floor !== null;
+    let shown = rec;
+    if (ai) shown = { ...rec, confidence: ai.confidence, reason: ai.reason || rec.reason };
+    else if (aiLower && rec.confidence > floor) shown = { ...rec, confidence: floor };
+    return { rec: shown, localConfidence: rec.confidence, aiScored: ai !== undefined, aiLower, aiPick: rerank.topId === rec.macroId };
   });
 }

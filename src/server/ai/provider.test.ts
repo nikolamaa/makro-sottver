@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import {
   AiError,
@@ -165,6 +165,35 @@ describe('createAnthropicProvider', () => {
     expect(await codeOf(slow.provider.generateJson(request({ timeoutMs: 30 })))).toBe('timeout');
   });
 
+  it('cancels the HTTP request when the caller aborts (AiError "cancelled", no retry)', async () => {
+    let aborted = false;
+    const hanging = anthropicWith(
+      (_req, signal) =>
+        new Promise<Response>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => {
+            aborted = true;
+            reject(new DOMException('aborted', 'AbortError'));
+          });
+        }),
+    );
+    const ctrl = new AbortController();
+    const pending = codeOf(hanging.provider.generateJson(request({ signal: ctrl.signal })));
+    await vi.waitFor(() => expect(hanging.calls).toHaveLength(1));
+    ctrl.abort();
+    expect(await pending).toBe('cancelled');
+    expect(aborted).toBe(true);
+    expect(hanging.calls).toHaveLength(1);
+
+    // The timeout still applies when a cancel signal is given.
+    const slow = anthropicWith(
+      (_req, signal) =>
+        new Promise<Response>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+        }),
+    );
+    expect(await codeOf(slow.provider.generateJson(request({ timeoutMs: 30, signal: new AbortController().signal })))).toBe('timeout');
+  });
+
   it('test() checks the key and model with a free models.retrieve call', async () => {
     const ok = anthropicWith(() => json({ type: 'model', id: 'claude-haiku-5-5', display_name: 'Claude Haiku 5.5', created_at: '2026-01-01T00:00:00Z' }));
     await expect(ok.provider.test()).resolves.toMatchObject({ ok: true });
@@ -260,6 +289,23 @@ describe('createOllamaProvider', () => {
 
     const broken = ollamaWith(() => json({ error: 'out of memory' }, 500));
     await expect(broken.provider.generateJson(request())).rejects.toMatchObject({ code: 'unknown', message: expect.stringContaining('out of memory') });
+  });
+
+  it('stops the local model when the caller aborts, and keeps the timeout', async () => {
+    const hang = (_url: string, init: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+      });
+    const ctrl = new AbortController();
+    const cancelled = ollamaWith(hang);
+    const pending = codeOf(cancelled.provider.generateJson(request({ signal: ctrl.signal })));
+    await vi.waitFor(() => expect(cancelled.calls).toHaveLength(1));
+    ctrl.abort();
+    expect(await pending).toBe('cancelled');
+    expect(cancelled.calls[0]!.init.signal?.aborted).toBe(true);
+
+    const slow = ollamaWith(hang);
+    expect(await codeOf(slow.provider.generateJson(request({ timeoutMs: 20, signal: new AbortController().signal })))).toBe('timeout');
   });
 
   it('test() looks for the model in /api/tags', async () => {

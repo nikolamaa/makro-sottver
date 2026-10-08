@@ -70,6 +70,10 @@ Korak po korak:
    zastarele ili neproverene činjenice. Ako poruka ima dva različita pitanja, druga preporuka pokriva drugo pitanje,
    pa se oba makroa mogu **spojiti** u jedan odgovor. Ako ništa ne odgovara (ispod praga, podrazumevano 45%), UI to
    jasno kaže i nudi AI nacrt i čuvanje kao novog makroa.
+
+   Opciono, kada je AI podešen, lokalni rezultat se posle prikaza proverava u pozadini (`POST /api/rerank`, „AI
+   double-check of recommendations“): AI ponovo oceni do 8 lokalnih kandidata, a kartice se ne preraspoređuju, nego im
+   se samo ažuriraju procenat i razlog i označava „AI pick“. Ako AI ne uspe, ostaje lokalni rezultat.
 4. **Prilagođavanje.**
    - **Brzi režim (uvek, besplatno, < 5 ms):** popunjavanje promenljivih iz poruke i iz polja koja agent unese
      (`{{user}}`, `{{amount}}`, `{{crypto}}`, `{{tx_hash}}`, `{{vip_rank}}` …), pozdrav, rečenica prilagođena

@@ -1,8 +1,10 @@
 /**
  * Deterministic one-sentence explanations for recommendations, e.g.
  * "Matches the pending withdrawal question (pending, BTC) and the macro is verified."
+ * "Matches the betting limits question (max bet, limit), but it is about casino, not sports."
  */
 import { INTENT_LABELS, type Intent, type ScoreBreakdown, type VerificationStatus } from '../../shared/types.js';
+import type { Product } from '../domain/igaming.js';
 
 export const MAX_REASON_LENGTH = 160;
 const MAX_REASON_TERMS = 3;
@@ -37,6 +39,37 @@ export interface ReasonInput {
   breakdown: ScoreBreakdown;
   verification: VerificationStatus;
   hasFacts: boolean;
+  /** Why the macro may not answer the message although it matches (lowers confidence; named in the reason). */
+  caveat?: ReasonCaveat | null;
+}
+
+/**
+ * - resolved: the macro is about a missing/pending money flow that the customer says already arrived;
+ * - product: the macro is specific to another product than the one the customer names;
+ * - uncovered: the customer's words for what the question asks that the macro does not mention.
+ */
+export type ReasonCaveat =
+  | { kind: 'resolved'; flow: 'deposit' | 'withdrawal' }
+  | { kind: 'product'; asked: readonly Product[]; macro: readonly Product[] }
+  | { kind: 'uncovered'; words: readonly string[] };
+
+const MAX_CAVEAT_WORDS = 2;
+
+function joinWithOr(parts: readonly string[]): string {
+  if (parts.length <= 1) return parts.join('');
+  return `${parts.slice(0, -1).join(', ')} or ${parts[parts.length - 1]}`;
+}
+
+/** Caveat clause without connector, e.g. "it is about casino, not sports". */
+function caveatText(caveat: ReasonCaveat, words: number): string {
+  switch (caveat.kind) {
+    case 'resolved':
+      return `the customer says the ${caveat.flow} already arrived`;
+    case 'product':
+      return `it is about ${joinWithAnd([...caveat.macro])}, not ${joinWithOr(caveat.asked)}`;
+    case 'uncovered':
+      return `it does not mention ${joinWithOr(caveat.words.slice(0, words).map((w) => `"${displayTerm(w)}"`))}`;
+  }
 }
 
 function mainClause(input: ReasonInput): string {
@@ -62,14 +95,38 @@ function verificationClause(verification: VerificationStatus, hasFacts: boolean)
   }
 }
 
-/** One deterministic sentence (<= 160 chars) explaining why a macro was recommended. */
+/** Verification tail after a caveat: "verified" is no longer worth a clause, warnings still are. */
+function caveatTail(verification: VerificationStatus, hasFacts: boolean): string {
+  switch (verification) {
+    case 'verified':
+      return '.';
+    case 'outdated':
+      return '; some of its facts are outdated.';
+    case 'conflict':
+      return '; one of its facts conflicts with the source.';
+    case 'unverified':
+      return hasFacts ? '; its facts are not verified yet.' : '.';
+  }
+}
+
+/**
+ * One deterministic sentence (<= 160 chars) explaining why a macro was recommended. When it is too long, matched
+ * terms are dropped first, then caveat words, then the caveat.
+ */
 export function buildReason(input: ReasonInput): string {
   const main = mainClause(input);
-  const tail = verificationClause(input.verification, input.hasFacts);
   const terms = input.matchedTerms.slice(0, MAX_REASON_TERMS);
-  for (let n = terms.length; n >= 0; n--) {
-    const withTerms = n > 0 ? `${main} (${terms.slice(0, n).join(', ')})${tail}` : `${main}${tail}`;
-    if (withTerms.length <= MAX_REASON_LENGTH) return withTerms;
+  const caveat = input.caveat ?? null;
+  const connector = main.includes(' but ') ? '; ' : ', but ';
+  const caveatWords = caveat?.kind === 'uncovered' ? Math.min(MAX_CAVEAT_WORDS, caveat.words.length) : 1;
+  for (let w = caveat ? caveatWords : 0; w >= 0; w--) {
+    const withCaveat = caveat && w > 0 ? `${connector}${caveatText(caveat, w)}` : '';
+    const tail = withCaveat ? caveatTail(input.verification, input.hasFacts) : verificationClause(input.verification, input.hasFacts);
+    for (let n = terms.length; n >= 0; n--) {
+      const withTerms = n > 0 ? `${main} (${terms.slice(0, n).join(', ')})` : main;
+      const sentence = `${withTerms}${withCaveat}${tail}`;
+      if (sentence.length <= MAX_REASON_LENGTH) return sentence;
+    }
   }
-  return `${main}${tail}`.slice(0, MAX_REASON_LENGTH);
+  return `${main}${verificationClause(input.verification, input.hasFacts)}`.slice(0, MAX_REASON_LENGTH);
 }

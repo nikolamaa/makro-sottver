@@ -40,12 +40,12 @@ export function Spinner({ label }: { label?: string }) {
   return <span className="spinner" role="status" aria-label={label ?? 'Loading'} />;
 }
 
-/** Horizontal confidence meter 0..100. */
-export function ConfidenceBar({ value }: { value: number }) {
+/** Horizontal confidence meter 0..100. `title` replaces the default "NN% confidence" tooltip. */
+export function ConfidenceBar({ value, title }: { value: number; title?: string }) {
   const v = Math.max(0, Math.min(100, Math.round(value)));
   const tone = v >= 70 ? 'high' : v >= 45 ? 'mid' : 'low';
   return (
-    <span className={`confidence confidence-${tone}`} title={`${v}% confidence`}>
+    <span className={`confidence confidence-${tone}`} title={title ?? `${v}% confidence`}>
       <span className="confidence-track">
         <span className="confidence-fill" style={{ width: `${v}%` }} />
       </span>

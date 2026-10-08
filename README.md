@@ -66,6 +66,7 @@ npm run recover      # vraćanje pristupa šifrovanoj bazi pomoću ključa za op
 | `Ctrl+V` bilo gde | nalepi poruku kupca i odmah dobij preporuke |
 | `Ctrl+Shift+V` | pročitaj clipboard |
 | `Alt+1` / `Alt+2` / `Alt+3` (ili `1`/`2`/`3`) | izaberi preporuku |
+| `Alt+4` | izaberi makro koji „AI suggests“ predlaže van liste (samo uz AI proveru preporuka) |
 | `Alt+Shift+1..3` | dodaj ili ukloni makro iz spajanja (više pitanja → jedan odgovor) |
 | `Alt+↓` / `Alt+↑` | sledeća ili prethodna preporuka |
 | `Ctrl+Enter` | **kopiraj odgovor** |
@@ -112,6 +113,10 @@ Promenljive koje MacroPilot sam popunjava iz poruke: `{{user}}`, `{{username}}`,
 | **Off** (podrazumevano) | $0 | Preporuke + šablon + ton, odmah |
 | **Claude Haiku 5.5** | ≈ $0,0004 po odgovoru, oko $1–2 mesečno | Settings → AI → nalepi Anthropic API ključ. Postoji mesečni limit troška i pseudonimizacija ličnih podataka |
 | **Ollama** | $0 | Instaliraj [Ollama](https://ollama.com), pa `ollama pull qwen2.5:3b`. Sporije na računarima bez GPU-a |
+
+**AI provera preporuka** (Settings → AI → „AI double-check of recommendations“, podrazumevano uključena kad je AI
+podešen): posle trenutne lokalne preporuke AI u pozadini ponovo oceni najbolje kandidate i objasni najbolji izbor, bez
+menjanja redosleda kartica, izbora i teksta odgovora (≈ $0,0002 po poruci sa Claude Haiku).
 
 Semantička pretraga radi i bez AI-ja. Podrazumevano se koristi ugrađeni vektorizator, a ako je dostupan, i lokalni
 neuralni model `bge-small-en-v1.5` (~35 MB, preuzima se jednom). Oba su besplatna.

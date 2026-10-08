@@ -70,6 +70,7 @@ export function AssistPage() {
             macroById={macroById}
             categoryById={categoryById}
             actions={actions}
+            rerank={state.rerank}
           />
           <ReplyEditor
             reply={state.reply}

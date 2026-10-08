@@ -31,6 +31,8 @@ export interface JsonRequest<S extends z.ZodType> {
   effort: AiEffort;
   /** Abort after this many ms (default 20000). */
   timeoutMs?: number;
+  /** Cancels the call (e.g. the browser dropped the request); it then rejects with AiError('cancelled'). */
+  signal?: AbortSignal;
 }
 
 export interface LlmResult<T> {
@@ -48,6 +50,7 @@ export type AiErrorCode =
   | 'rate_limit'
   | 'network'
   | 'timeout'
+  | 'cancelled'
   | 'unknown';
 
 export class AiError extends Error {
@@ -73,6 +76,7 @@ export interface LlmProvider {
 }
 
 const DEFAULT_TIMEOUT_MS = 20_000;
+const CANCELLED_MESSAGE = 'The AI request was cancelled.';
 const TEST_TIMEOUT_MS = 10_000;
 const MIN_MAX_TOKENS = 2048;
 
@@ -184,10 +188,10 @@ export function createAnthropicProvider(opts: { apiKey: string; model: string; c
             messages: [{ role: 'user', content: req.user }],
             output_config: { format: safeOutputFormat(req.schema), effort: req.effort },
           },
-          { timeout: req.timeoutMs ?? DEFAULT_TIMEOUT_MS },
+          { timeout: req.timeoutMs ?? DEFAULT_TIMEOUT_MS, signal: req.signal },
         );
       } catch (err) {
-        throw toAnthropicError(err, model);
+        throw req.signal?.aborted ? new AiError('cancelled', CANCELLED_MESSAGE) : toAnthropicError(err, model);
       }
       const usage = anthropicUsage(model, response.usage, performance.now() - started);
       if (response.stop_reason === 'refusal') {
@@ -302,13 +306,26 @@ function toOllamaError(err: unknown, baseUrl: string): AiError {
   return new AiError('network', `Cannot reach Ollama at ${baseUrl}. Is Ollama running?`);
 }
 
-/** One HTTP round trip to Ollama; the timeout covers reading the body too. */
-async function ollamaJson<T>(doFetch: FetchLike, baseUrl: string, path: string, init: RequestInit, timeoutMs: number, model: string): Promise<T> {
+/**
+ * One HTTP round trip to Ollama; the timeout covers reading the body too. `cancel` aborts it early (Ollama then
+ * stops generating, so a dropped request does not keep the local model busy).
+ */
+async function ollamaJson<T>(
+  doFetch: FetchLike,
+  baseUrl: string,
+  path: string,
+  init: RequestInit,
+  timeoutMs: number,
+  model: string,
+  cancel?: AbortSignal,
+): Promise<T> {
+  const timeout = AbortSignal.timeout(timeoutMs);
   try {
-    const res = await doFetch(`${baseUrl}${path}`, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+    const res = await doFetch(`${baseUrl}${path}`, { ...init, signal: cancel ? AbortSignal.any([timeout, cancel]) : timeout });
     if (!res.ok) throw await ollamaHttpError(res, model);
     return (await res.json()) as T;
   } catch (err) {
+    if (cancel?.aborted) throw new AiError('cancelled', CANCELLED_MESSAGE);
     throw toOllamaError(err, baseUrl);
   }
 }
@@ -343,7 +360,7 @@ export function createOllamaProvider(opts: { url: string; model: string; fetch?:
         options: { temperature: 0.2, num_predict: req.maxTokens },
       };
       const init: RequestInit = { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body) };
-      const res = await ollamaJson<OllamaChatResponse>(doFetch, baseUrl, '/api/chat', init, req.timeoutMs ?? DEFAULT_TIMEOUT_MS, model);
+      const res = await ollamaJson<OllamaChatResponse>(doFetch, baseUrl, '/api/chat', init, req.timeoutMs ?? DEFAULT_TIMEOUT_MS, model, req.signal);
       const usage: LlmUsage = {
         provider: 'ollama',
         model,

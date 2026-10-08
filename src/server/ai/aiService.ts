@@ -204,18 +204,25 @@ export class AiService {
    * Optional LLM re-rank of local candidates; returns re-ordered recommendations with AI reasons/confidence.
    * Breakdown, warnings and other local fields are kept. Same rules as the other AI features: strict local mode,
    * the monthly budget and pseudonymization apply, and usage is recorded (also for billed calls that failed).
-   * Never fails because of AI: on any AiError (not configured, strict local, budget, network, invalid output...)
-   * the original candidates are returned unchanged with aiUsed = false.
+   * Never fails because of AI: on any AiError (not configured, strict local, budget, network, invalid output,
+   * cancelled...) the original candidates are returned unchanged with aiUsed = false. `signal` cancels the provider
+   * call (the browser dropped the request), so an outdated double-check does not keep running or occupy the model.
    */
-  async rerank(input: { message: string; analysis: Analysis; candidates: Recommendation[]; macros: ReadonlyMap<string, Macro> }): Promise<RerankResult> {
+  async rerank(input: {
+    message: string;
+    analysis: Analysis;
+    candidates: Recommendation[];
+    macros: ReadonlyMap<string, Macro>;
+    signal?: AbortSignal;
+  }): Promise<RerankResult> {
     const local: RerankResult = { recommendations: input.candidates, aiUsed: false, usage: null };
-    if (!input.candidates.length) return local;
+    if (!input.candidates.length || input.signal?.aborted) return local;
     try {
       const { provider, settings } = this.require();
       const view = privacyView(provider, settings, input.message, input.analysis, {});
       const candidates = input.candidates.map((c) => rankCandidate(c, input.macros.get(c.macroId)));
       const spec = rankPrompt(view.message, analysisForPrompt(input.analysis, view.mask), candidates);
-      const { data, usage } = await this.run('rerank', provider, settings, spec);
+      const { data, usage } = await this.run('rerank', provider, settings, spec, input.signal);
       // An answer that names none of the candidates carries no ranking: keep the local one.
       if (!data.ranked.some((r) => input.candidates.some((c) => c.macroId === r.id))) return local;
       return { recommendations: applyRanking(input.candidates, data.ranked, view.restore), aiUsed: true, usage };
@@ -275,6 +282,7 @@ export class AiService {
     provider: LlmProvider,
     settings: AppSettings,
     spec: PromptSpec<S>,
+    signal?: AbortSignal,
   ): Promise<LlmResult<z.infer<S>>> {
     try {
       const result = await provider.generateJson({
@@ -285,6 +293,7 @@ export class AiService {
         maxTokens: OUTPUT_TOKEN_LIMITS[purpose],
         effort: settings.ai.effort,
         timeoutMs: isPaid(provider) ? CLOUD_TIMEOUT_MS : OLLAMA_TIMEOUT_MS,
+        signal,
       });
       this.deps.recordUsage(purpose, result.usage);
       return result;

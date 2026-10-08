@@ -244,7 +244,20 @@ export async function buildApp(ctx: AppContext): Promise<FastifyInstance> {
 
   // Assist -------------------------------------------------------------------
   app.post('/api/recommend', async (req) => ctx.assist.recommend(parse(MessageSchema, req.body).message));
-  app.post('/api/rerank', async (req) => ctx.assist.rerank(parse(MessageSchema, req.body).message));
+  app.post('/api/rerank', async (req, reply) => {
+    const { message } = parse(MessageSchema, req.body);
+    // The browser aborts the double-check when the message changes: stop the AI call too (cost, busy local model).
+    const dropped = new AbortController();
+    const onClose = () => {
+      if (!reply.raw.writableFinished) dropped.abort();
+    };
+    reply.raw.once('close', onClose);
+    try {
+      return await ctx.assist.rerank(message, dropped.signal);
+    } finally {
+      reply.raw.off('close', onClose);
+    }
+  });
   app.post('/api/personalize', async (req) => ctx.assist.personalize(parse(PersonalizeSchema, req.body)));
   app.post('/api/draft', async (req) => ctx.assist.draft(parse(DraftSchema, req.body)));
   app.post('/api/events', async (req) => {

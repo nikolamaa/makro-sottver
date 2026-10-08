@@ -4,9 +4,11 @@
  */
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
+import { request as httpRequest, type ClientRequest } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InjectOptions } from 'fastify';
 import type { z } from 'zod';
 import { API_CLIENT_HEADER, type HealthResponse } from '../../shared/api.js';
@@ -22,12 +24,32 @@ const MESSAGE = 'Hi, my name is John Smith (john.smith@example.com). My BTC with
 
 type Ranked = { id: string; confidence: number; reason: string }[];
 
-/** Fake Claude: records requests; `answer` ranks the candidate ids found in the prompt (or throws `error`). */
+/**
+ * Fake Claude: records requests; `answer` ranks the candidate ids found in the prompt (or throws `error`). With
+ * `delayMs` it answers late and, like the real providers, fails with AiError('cancelled') when the call is aborted.
+ */
 const fake = {
   requests: [] as JsonRequest<z.ZodType>[],
   answer: (ids: string[]): Ranked => ids.map((id, i) => ({ id, confidence: 90 - i * 20, reason: `AI reason ${i}` })),
   error: null as AiError | null,
+  delayMs: 0,
+  cancelled: 0,
 };
+
+function waitOrCancel(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        fake.cancelled++;
+        reject(new AiError('cancelled', 'The AI request was cancelled.'));
+      },
+      { once: true },
+    );
+  });
+}
 
 const provider: LlmProvider = {
   id: 'anthropic',
@@ -35,6 +57,7 @@ const provider: LlmProvider = {
   isCloud: true,
   async generateJson<S extends z.ZodType>(req: JsonRequest<S>) {
     fake.requests.push(req);
+    if (fake.delayMs) await waitOrCancel(fake.delayMs, req.signal);
     if (fake.error) throw fake.error;
     const ids = [...req.user.matchAll(/<candidate id="([^"]+)">/g)].map((m) => m[1]!);
     const data = req.schema.parse({ ranked: fake.answer(ids), no_good_match: false, missing_topics: [] }) as z.infer<S>;
@@ -110,6 +133,8 @@ afterAll(async () => {
 beforeEach(async () => {
   fake.requests = [];
   fake.error = null;
+  fake.delayMs = 0;
+  fake.cancelled = 0;
   fake.answer = (ids) => ids.map((id, i) => ({ id, confidence: 90 - i * 20, reason: `AI reason ${i}` }));
   await settings({ ai: { provider: 'anthropic', rerank: true, monthlyBudgetUsd: 5, pseudonymize: true }, privacy: { strictLocal: false }, recommendation: DEFAULT_SETTINGS.recommendation });
 });
@@ -201,5 +226,54 @@ describe('POST /api/rerank', () => {
     fake.error = new AiError('invalid_output', 'Cut off.', USAGE);
     expect((await rerank()).body.aiUsed).toBe(false);
     expect((await usage()).requests).toBe(before.requests + 1);
+  });
+});
+
+describe('POST /api/rerank over a real connection', () => {
+  let port: number;
+
+  beforeAll(async () => {
+    await rt.app.listen({ port: 0, host: '127.0.0.1' });
+    port = (rt.app.server.address() as AddressInfo).port;
+  });
+
+  /** Raw HTTP request (like the browser's fetch), so the test can drop the connection like an AbortController. */
+  function post(message: string): { req: ClientRequest; body: Promise<RerankResponse> } {
+    const req = httpRequest({
+      host: '127.0.0.1',
+      port,
+      path: '/api/rerank',
+      method: 'POST',
+      headers: { host: `127.0.0.1:${PORT}`, [API_CLIENT_HEADER]: '1', 'content-type': 'application/json' },
+    });
+    const body = new Promise<RerankResponse>((resolve, reject) => {
+      req.on('error', reject);
+      req.on('response', (res) => {
+        let data = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => (data += chunk));
+        res.on('end', () => resolve(JSON.parse(data) as RerankResponse));
+      });
+    });
+    req.end(JSON.stringify({ message }));
+    return { req, body };
+  }
+
+  it('lets the AI finish while the browser waits for the answer', async () => {
+    fake.delayMs = 60;
+    const res = await post(MESSAGE).body;
+    expect(res.aiUsed).toBe(true);
+    expect(fake.cancelled).toBe(0);
+  });
+
+  it('cancels the AI call when the browser drops the request (message changed)', async () => {
+    fake.delayMs = 30_000;
+    const before = await usage();
+    const { req, body } = post(MESSAGE);
+    body.catch(() => undefined);
+    await vi.waitFor(() => expect(fake.requests).toHaveLength(1));
+    req.destroy();
+    await vi.waitFor(() => expect(fake.cancelled).toBe(1));
+    expect((await usage()).requests).toBe(before.requests);
   });
 });

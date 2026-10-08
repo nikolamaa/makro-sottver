@@ -2,7 +2,8 @@
 /**
  * `npm run test:e2e` - end-to-end smoke test in a real (headless) Chromium against the built app:
  * first-run recovery key dialog, paste a customer message, recommendations, personalized reply, copy to the
- * clipboard, quick search, Library / Import / Settings pages. Fails on any browser console error.
+ * clipboard, the AI double-check (with a faked AI), quick search, Library / Import / Settings pages. Fails on any
+ * browser console error.
  *
  * Env: E2E_CHROMIUM (browser executable), E2E_SCREENSHOTS (directory for screenshots, default test-results/e2e).
  */
@@ -134,6 +135,69 @@ try {
     await box.fill("what's the weather going to be like in Belgrade tomorrow?");
     await page.getByText(/No macro matches well/i).waitFor();
     await page.screenshot({ path: join(shots, '04-no-match.png'), fullPage: true });
+  });
+
+  await step('AI double-check (faked AI): outdated check aborted, cards scored in place, one call per message', async () => {
+    // Pretend a provider is ready; /api/rerank answers like the AI would (prefers the local #2) once released.
+    const calls = [];
+    await page.route('**/api/health', async (route) => {
+      const res = await route.fetch();
+      await route.fulfill({ response: res, json: { ...(await res.json()), ai: { provider: 'anthropic', ready: true, detail: 'fake' } } });
+    });
+    await page.route('**/api/rerank', async (route) => {
+      const res = await route.fetch();
+      const local = await res.json();
+      const [first, second = first] = local.recommendations;
+      const json = {
+        recommendations: [
+          { ...second, confidence: 93, reason: 'AI: answers the pending withdrawal.' },
+          { ...first, confidence: 64, reason: 'AI: only partly.' },
+        ],
+        noGoodMatch: false,
+        aiUsed: true,
+        llm: null,
+      };
+      await new Promise((release) => calls.push({ message: route.request().postDataJSON().message, release }));
+      await route.fulfill({ response: res, json }).catch(() => {}); // the page aborted it
+    });
+    await page.reload();
+    const box = page.getByPlaceholder(/Paste the customer's message/);
+    const checking = page.getByText('AI checking…');
+    /** Waits until the (non-stale) top card's title matches `pattern`. */
+    const topCard = (pattern) =>
+      page.waitForFunction((src) => new RegExp(src, 'i').test(document.querySelector('.rec-list:not(.is-stale) .rec-title')?.textContent ?? ''), pattern);
+
+    // The agent moves on to another message while the AI is still checking the first one.
+    await box.fill('my deposit has not arrived yet, it has been 3 hours');
+    await topCard('deposit');
+    await checking.waitFor();
+    assert(calls.length === 1, `one check for the first message (got ${calls.length})`);
+    await box.fill(message);
+    await checking.waitFor({ state: 'detached' });
+    await topCard('withdrawal');
+    await page.waitForFunction(() => (document.querySelector('textarea[aria-label="Reply text"]')?.value ?? '').length > 20);
+    const titles = await page.locator('.rec-card .rec-title').allTextContents();
+    const selected = await page.locator('.rec-card.is-selected .rec-title').allTextContents();
+    const reply = await page.getByLabel('Reply text').inputValue();
+
+    await checking.waitFor();
+    assert(calls.length === 2 && calls[1].message === message, 'the second message gets its own check');
+    for (const c of calls) c.release();
+    await page.getByText('AI pick').waitFor();
+    await checking.waitFor({ state: 'detached' });
+    assert(JSON.stringify(await page.locator('.rec-card .rec-title').allTextContents()) === JSON.stringify(titles), 'cards keep their order');
+    assert(JSON.stringify(await page.locator('.rec-card.is-selected .rec-title').allTextContents()) === JSON.stringify(selected), 'selection unchanged');
+    assert((await page.getByLabel('Reply text').inputValue()) === reply, 'reply text unchanged');
+    const second = (await page.locator('.rec-card').nth(1).textContent()) ?? '';
+    assert(/AI pick/.test(second) && /93%/.test(second), `AI pick badge and score on card 2 (got: ${second.slice(0, 120)})`);
+    await page.screenshot({ path: join(shots, '04b-ai-double-check.png'), fullPage: true });
+    await page.waitForTimeout(1000);
+    assert(calls.length === 2, `no further AI calls for the same message (got ${calls.length})`);
+
+    await page.unroute('**/api/rerank');
+    await page.unroute('**/api/health');
+    await page.reload();
+    await box.waitFor();
   });
 
   await step('Ctrl+K quick search finds macros', async () => {

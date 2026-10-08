@@ -1,7 +1,8 @@
-import { memo, type MouseEvent } from 'react';
+import { memo, useMemo, type MouseEvent } from 'react';
 import type { Category, Id, Macro, Recommendation, RecommendResponse, VerificationStatus } from '../../../shared/types';
 import { Badge, ConfidenceBar, EmptyState, Kbd, Spinner } from '../../ui';
 import { verificationBadge } from './format';
+import { IDLE_RERANK, shownRecommendations, type RerankState } from './rerank';
 import { toggleFavorite } from './requests';
 import type { AssistActions } from './useAssist';
 
@@ -13,7 +14,11 @@ interface RecommendationListProps {
   macroById: ReadonlyMap<Id, Macro>;
   categoryById: ReadonlyMap<Id, Category>;
   actions: AssistActions;
+  /** AI double-check of `result` (idle when the AI is off). */
+  rerank?: RerankState;
 }
+
+const AI_PICK_TITLE = 'The AI double-check rates this macro the best fit';
 
 const SKELETON_CARDS = [0, 1, 2];
 
@@ -48,6 +53,7 @@ function VerificationBadge({ status }: { status: VerificationStatus }) {
 }
 
 interface CardProps {
+  /** Recommendation as displayed (AI confidence/reason applied when aiScored). */
   rec: Recommendation;
   rank: number;
   /** Position in the selection (0 = primary), -1 when not selected. */
@@ -56,9 +62,21 @@ interface CardProps {
   favorite: boolean;
   category: Category | undefined;
   actions: AssistActions;
+  aiScored: boolean;
+  aiLower: boolean;
+  aiPick: boolean;
+  localConfidence: number;
 }
 
-const RecommendationCard = memo(function RecommendationCard({ rec, rank, order, combined, favorite, category, actions }: CardProps) {
+function confidenceTitle(confidence: number, localConfidence: number, aiScored: boolean, aiLower: boolean): string | undefined {
+  const local = Math.round(localConfidence);
+  if (aiScored) return `${Math.round(confidence)}% after the AI double-check (local match ${local}%)`;
+  if (aiLower) return `The AI double-check ranks other macros higher (local match ${local}%)`;
+  return undefined;
+}
+
+const RecommendationCard = memo(function RecommendationCard(props: CardProps) {
+  const { rec, rank, order, combined, favorite, category, actions, aiScored, aiLower, aiPick, localConfidence } = props;
   const selected = order >= 0;
   const onClick = (e: MouseEvent) => (e.shiftKey ? actions.toggleCombine(rank) : actions.select(rank));
   return (
@@ -67,14 +85,26 @@ const RecommendationCard = memo(function RecommendationCard({ rec, rank, order, 
         <span className="rec-head">
           <Kbd combo={`alt+${rank + 1}`} />
           <span className="rec-title">{rec.title}</span>
+          {aiPick ? (
+            <Badge tone="info" title={AI_PICK_TITLE}>
+              AI pick
+            </Badge>
+          ) : null}
           {selected && combined ? <Badge tone="accent">part {order + 1}</Badge> : null}
         </span>
         <span className="rec-meta">
-          <ConfidenceBar value={rec.confidence} />
+          <ConfidenceBar value={rec.confidence} title={confidenceTitle(rec.confidence, localConfidence, aiScored, aiLower)} />
           <VerificationBadge status={rec.verification} />
           <CategoryTag category={category} />
         </span>
-        <span className="rec-reason">{rec.reason}</span>
+        <span className="rec-reason">
+          {aiScored ? (
+            <span className="rec-ai-mark" title="Reason from the AI double-check">
+              AI
+            </span>
+          ) : null}
+          {rec.reason}
+        </span>
         {rec.warnings.length ? <span className={`rec-warnings rec-warnings-${rec.verification}`}>{rec.warnings.join(' · ')}</span> : null}
         {rec.matchedTerms.length ? <span className="rec-terms">matched: {rec.matchedTerms.join(', ')}</span> : null}
       </button>
@@ -83,13 +113,19 @@ const RecommendationCard = memo(function RecommendationCard({ rec, rank, order, 
   );
 });
 
-/** A macro chosen from quick search that is not among the recommendations. */
-const PickedCard = memo(function PickedCard({ macro, category }: { macro: Macro; category: Category | undefined }) {
+/** A macro chosen from quick search (or the AI suggestion) that is not among the recommendations. */
+const PickedCard = memo(function PickedCard({ macro, category, aiPick }: { macro: Macro; category: Category | undefined; aiPick: boolean }) {
   return (
     <li className="rec-card is-selected rec-picked">
       <div className="rec-main">
         <span className="rec-head">
-          <Badge tone="info">from search</Badge>
+          {aiPick ? (
+            <Badge tone="info" title={AI_PICK_TITLE}>
+              AI pick
+            </Badge>
+          ) : (
+            <Badge tone="info">from search</Badge>
+          )}
           <span className="rec-title">{macro.title}</span>
         </span>
         <span className="rec-meta">
@@ -129,28 +165,60 @@ function EmptyRecommendations({ hasMessage, result }: { hasMessage: boolean; res
   return null;
 }
 
-/** Recommendation cards (1..3) plus any macro picked from quick search. */
+/** "AI suggests: <title>" for the AI's top pick that is not among the cards; Alt+4 or a click uses it. */
+function AiSuggestion({ suggestion, actions }: { suggestion: Recommendation; actions: AssistActions }) {
+  return (
+    <button type="button" className="rec-ai-suggest" onClick={actions.pickAiSuggestion} title={suggestion.reason || undefined}>
+      AI suggests: <strong>{suggestion.title}</strong>{' '}
+      <span className="muted">
+        (press <Kbd combo="alt+4" /> or click to use)
+      </span>
+    </button>
+  );
+}
+
+/** Recommendation cards (1..3) plus any macro picked from quick search, with the optional AI double-check. */
 export const RecommendationList = memo(function RecommendationList(props: RecommendationListProps) {
-  const { result, analyzing, hasMessage, selectedIds, macroById, categoryById, actions } = props;
-  const recs = result?.recommendations ?? [];
-  const picked = selectedIds.filter((id) => !recs.some((r) => r.macroId === id)).flatMap((id) => macroById.get(id) ?? []);
+  const { result, analyzing, hasMessage, selectedIds, macroById, categoryById, actions, rerank = IDLE_RERANK } = props;
+  const recs = result?.recommendations;
+  const shown = useMemo(() => shownRecommendations(recs ?? [], rerank), [recs, rerank]);
+  const picked = selectedIds.filter((id) => !shown.some((s) => s.rec.macroId === id)).flatMap((id) => macroById.get(id) ?? []);
   const combined = selectedIds.length > 1;
-  const showCards = recs.length > 0 || picked.length > 0;
+  const showCards = shown.length > 0 || picked.length > 0;
+  const suggestion = rerank.suggestion && !selectedIds.includes(rerank.suggestion.macroId) ? rerank.suggestion : null;
 
   return (
     <section className="assist-recs" aria-label="Recommendations" aria-busy={analyzing}>
       <div className="assist-section-head">
-        <h2 className="assist-title">Recommendations</h2>
+        <div className="assist-head-main">
+          <h2 className="assist-title">Recommendations</h2>
+          {rerank.status === 'running' ? (
+            <span className="rec-ai-checking" role="status">
+              <span className="spinner" aria-hidden="true" />
+              AI checking…
+            </span>
+          ) : null}
+        </div>
         {analyzing ? <Spinner label="Finding macros" /> : null}
       </div>
+      {rerank.noGoodMatch ? (
+        <p className="rec-ai-hint" role="status">
+          AI: no macro fully answers this
+        </p>
+      ) : null}
       {!result && analyzing ? (
         <SkeletonCards />
       ) : showCards ? (
         <ul className={`rec-list ${analyzing ? 'is-stale' : ''}`} aria-label="Recommended macros">
           {picked.map((m) => (
-            <PickedCard key={m.id} macro={m} category={m.categoryId ? categoryById.get(m.categoryId) : undefined} />
+            <PickedCard
+              key={m.id}
+              macro={m}
+              category={m.categoryId ? categoryById.get(m.categoryId) : undefined}
+              aiPick={m.id === rerank.topId}
+            />
           ))}
-          {recs.map((rec, rank) => (
+          {shown.map(({ rec, aiScored, aiLower, aiPick, localConfidence }, rank) => (
             <RecommendationCard
               key={rec.macroId}
               rec={rec}
@@ -160,12 +228,17 @@ export const RecommendationList = memo(function RecommendationList(props: Recomm
               favorite={macroById.get(rec.macroId)?.isFavorite ?? false}
               category={rec.categoryId ? categoryById.get(rec.categoryId) : undefined}
               actions={actions}
+              aiScored={aiScored}
+              aiLower={aiLower}
+              aiPick={aiPick}
+              localConfidence={localConfidence}
             />
           ))}
         </ul>
       ) : (
         <EmptyRecommendations hasMessage={hasMessage} result={result} />
       )}
+      {suggestion && result ? <AiSuggestion suggestion={suggestion} actions={actions} /> : null}
     </section>
   );
 });

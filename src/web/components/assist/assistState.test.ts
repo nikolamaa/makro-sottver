@@ -9,7 +9,8 @@ import {
   type AssistAction,
   type AssistState,
 } from './assistState';
-import { analysisFixture, draftFixture, personalizeFixture, recommendationFixture, resultFixture } from './testFixtures';
+import { IDLE_RERANK, shownRecommendations } from './rerank';
+import { analysisFixture, draftFixture, personalizeFixture, recommendationFixture, rerankFixture, resultFixture } from './testFixtures';
 
 const MESSAGE = 'Hi, I am Marko. Where is my withdrawal? Waiting 3 days!';
 const REQUEST: PersonalizeRequest = { message: MESSAGE, macroIds: ['a'], variables: {}, mode: 'fast' };
@@ -181,6 +182,135 @@ describe('assistReducer: reply', () => {
     const s = run([{ type: 'edit', text: 'edited' }, { type: 'aiReady', key: 'k1', res: personalizeFixture('ai') }], withFastReply());
     expect(assistReducer(s, { type: 'select', ids: ['b'] }).reply.pendingAi).toBeNull();
     expect(assistReducer(s, { type: 'clear' })).toBe(INITIAL_ASSIST_STATE);
+  });
+});
+
+describe('assistReducer: AI double-check', () => {
+  const aiRanking = rerankFixture([
+    recommendationFixture('b', { confidence: 92, reason: 'AI: explains the pending withdrawal.' }),
+    recommendationFixture('a', { confidence: 64, reason: 'AI: only the general process.' }),
+    recommendationFixture('c', { confidence: 30, reason: 'AI: different topic.' }),
+  ]);
+
+  function checking(from: AssistState = withFastReply()): AssistState {
+    return assistReducer(from, { type: 'rerankStarted', message: MESSAGE });
+  }
+
+  it('marks the check as running for the shown result only', () => {
+    expect(checking().rerank).toEqual({ ...IDLE_RERANK, message: MESSAGE, status: 'running' });
+    const typing = assistReducer(withFastReply(), { type: 'message', message: 'other text', fresh: false });
+    expect(assistReducer(typing, { type: 'rerankStarted', message: 'other text' })).toBe(typing);
+    expect(assistReducer(INITIAL_ASSIST_STATE, { type: 'rerankStarted', message: '' })).toBe(INITIAL_ASSIST_STATE);
+  });
+
+  it('updates confidence and reason in place: same card order, selection and reply', () => {
+    const before = checking();
+    const s = assistReducer(before, { type: 'reranked', message: MESSAGE, res: aiRanking });
+    expect(s.rerank.status).toBe('done');
+    // The local result (and so Alt+1..3, the selection and the reply) is untouched.
+    expect(s.result).toBe(before.result);
+    expect(s.selectedIds).toEqual(['a']);
+    expect(s.reply).toBe(before.reply);
+
+    const shown = shownRecommendations(s.result!.recommendations, s.rerank);
+    expect(shown.map((c) => [c.rec.macroId, c.rec.confidence, c.localConfidence, c.aiScored])).toEqual([
+      ['a', 64, 82, true],
+      ['b', 92, 61, true],
+      ['c', 30, 40, true],
+    ]);
+    expect(shown[1]!.rec.reason).toBe('AI: explains the pending withdrawal.');
+    expect(shown[1]!.rec.breakdown).toEqual(s.result!.recommendations[1]!.breakdown);
+  });
+
+  it('marks only the AI top pick and keeps unscored cards below the AI answer local', () => {
+    const partial = rerankFixture([recommendationFixture('c', { confidence: 88, reason: 'AI: best fit.' })]);
+    const s = assistReducer(checking(), { type: 'reranked', message: MESSAGE, res: partial });
+    expect(s.rerank.topId).toBe('c');
+    expect(s.rerank.suggestion).toBeNull();
+    const shown = shownRecommendations(s.result!.recommendations, s.rerank);
+    expect(shown.map((c) => c.aiPick)).toEqual([false, false, true]);
+    expect(shown[0]).toEqual({ rec: s.result!.recommendations[0], localConfidence: 82, aiScored: false, aiLower: true, aiPick: false });
+  });
+
+  it('caps cards the AI ranked below its answer, so no local score contradicts the AI ranking', () => {
+    // The AI's best 3 are d (not shown), a and e: b and c rank lower than 55 for the AI.
+    const res = rerankFixture([
+      recommendationFixture('d', { confidence: 90 }),
+      recommendationFixture('a', { confidence: 70, reason: 'AI: partly.' }),
+      recommendationFixture('e', { confidence: 55 }),
+    ]);
+    const s = assistReducer(checking(), { type: 'reranked', message: MESSAGE, res });
+    expect(s.rerank.floor).toBe(55);
+    const shown = shownRecommendations(s.result!.recommendations, s.rerank);
+    expect(shown.map((c) => [c.rec.macroId, c.rec.confidence, c.localConfidence, c.aiScored, c.aiLower])).toEqual([
+      ['a', 70, 82, true, false],
+      ['b', 55, 61, false, true],
+      ['c', 40, 40, false, true],
+    ]);
+    // Only the number is capped: the reason, warnings and order stay local.
+    expect(shown[1]!.rec).toEqual({ ...s.result!.recommendations[1], confidence: 55 });
+    expect(shownRecommendations(s.result!.recommendations, IDLE_RERANK).map((c) => c.rec)).toEqual(s.result!.recommendations);
+  });
+
+  it('offers the AI top pick as a suggestion when it is not among the cards', () => {
+    const res = rerankFixture([recommendationFixture('d', { title: 'Macro d', confidence: 90 }), recommendationFixture('a', { confidence: 70 })]);
+    const s = assistReducer(checking(), { type: 'reranked', message: MESSAGE, res });
+    expect(s.rerank.topId).toBe('d');
+    expect(s.rerank.suggestion?.macroId).toBe('d');
+    expect(Object.keys(s.rerank.scores)).toEqual(['a']);
+    expect(shownRecommendations(s.result!.recommendations, s.rerank).some((c) => c.aiPick)).toBe(false);
+    expect(s.selectedIds).toEqual(['a']);
+  });
+
+  it('shows the AI no-match hint only when the local match was good, without a top pick', () => {
+    const res = rerankFixture([recommendationFixture('a', { confidence: 35 })], { noGoodMatch: true });
+    const s = assistReducer(checking(), { type: 'reranked', message: MESSAGE, res });
+    expect(s.rerank).toMatchObject({ noGoodMatch: true, topId: null, suggestion: null });
+    expect(s.reply.text).toBe('Hi Marko, your withdrawal is pending.');
+
+    const weakLocal = run([
+      { type: 'message', message: 'vague', fresh: true },
+      { type: 'recommended', message: 'vague', result: resultFixture({ noGoodMatch: true }) },
+      { type: 'rerankStarted', message: 'vague' },
+      { type: 'reranked', message: 'vague', res },
+    ]);
+    expect(weakLocal.rerank.noGoodMatch).toBe(false);
+  });
+
+  it('changes nothing when the AI was not used', () => {
+    const s = assistReducer(checking(), { type: 'reranked', message: MESSAGE, res: rerankFixture(resultFixture().recommendations, { aiUsed: false }) });
+    expect(s.rerank).toEqual({ ...IDLE_RERANK, message: MESSAGE, status: 'done' });
+  });
+
+  it('ignores a stale answer for an older message or a cancelled check', () => {
+    const next = run([
+      { type: 'message', message: 'second customer', fresh: true },
+      { type: 'recommended', message: 'second customer', result: resultFixture() },
+    ], checking());
+    expect(next.rerank).toBe(IDLE_RERANK);
+    expect(assistReducer(next, { type: 'reranked', message: MESSAGE, res: aiRanking })).toBe(next);
+
+    // Same message, but the check was stopped (or never started): late answers are dropped too.
+    const stopped = assistReducer(checking(), { type: 'rerankStopped', message: MESSAGE });
+    expect(stopped.rerank).toBe(IDLE_RERANK);
+    expect(assistReducer(stopped, { type: 'reranked', message: MESSAGE, res: aiRanking })).toBe(stopped);
+    expect(assistReducer(withFastReply(), { type: 'reranked', message: MESSAGE, res: aiRanking }).rerank).toBe(IDLE_RERANK);
+  });
+
+  it('keeps the answer while the agent edits the message, until the new result arrives', () => {
+    const done = assistReducer(checking(), { type: 'reranked', message: MESSAGE, res: aiRanking });
+    const typing = assistReducer(done, { type: 'message', message: `${MESSAGE}!`, fresh: false });
+    expect(typing.rerank).toBe(done.rerank);
+    const fresh = assistReducer(typing, { type: 'recommended', message: `${MESSAGE}!`, result: resultFixture() });
+    expect(fresh.rerank).toBe(IDLE_RERANK);
+  });
+
+  it('fails silently and resets with the page', () => {
+    const failed = assistReducer(checking(), { type: 'rerankFailed', message: MESSAGE });
+    expect(failed.rerank).toMatchObject({ message: MESSAGE, status: 'failed', scores: {} });
+    expect(assistReducer(failed, { type: 'rerankFailed', message: 'old' })).toBe(failed);
+    expect(assistReducer(checking(), { type: 'recommendFailed', message: MESSAGE, error: 'x' }).rerank).toBe(IDLE_RERANK);
+    expect(assistReducer(failed, { type: 'clear' }).rerank).toBe(IDLE_RERANK);
   });
 });
 

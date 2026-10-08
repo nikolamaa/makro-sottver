@@ -47,6 +47,32 @@ export const CONCEPTS: ConceptGroup[] = [
   { id: 'time', terms: ['how long', 'when', 'today', 'yesterday', 'hours', 'hour', 'days', 'day', 'week', 'weeks', 'minutes', 'asap', 'urgent', 'immediately', 'right now'] },
 ];
 
+/** Gambling products a question or macro can be specific to. */
+export type Product = 'sports' | 'casino' | 'poker';
+
+/**
+ * Unambiguous words for each product, used by search to detect product mismatch (a tennis betting-limit question
+ * vs a casino-only macro). Deliberately strict: "game", "bet", "match", "crash" and "cash out" are left out
+ * because they are used for several products (or for technical problems / withdrawals). Lowercase; multi-word
+ * phrases allowed. The sports names mirror the analyzer's sports evidence (analysis/intents.ts).
+ */
+export const PRODUCT_TERMS: Record<Product, string[]> = {
+  sports: [
+    'sport', 'sports', 'sportsbook', 'sports bet', 'sports bets', 'bet slip', 'betslip', 'parlay', 'parlays', 'multi', 'multis',
+    'multi bet', 'same game multi', 'sgm', 'accumulator', 'acca', 'leg', 'legs', 'handicap', 'asian handicap', 'over under',
+    'asian total', 'player prop', 'player props', 'prop bet', 'prop bets', 'live bet', 'fixture', 'goal', 'goals',
+    'football', 'soccer', 'tennis', 'basketball', 'baseball', 'hockey', 'cricket', 'rugby', 'golf', 'boxing', 'ufc', 'mma',
+    'nba', 'nfl', 'nhl', 'mlb', 'esports', 'e-sports', 'cs2', 'csgo', 'dota', 'valorant', 'horse racing', 'formula 1', 'f1',
+    'premier league', 'champions league', 'la liga', 'serie a', 'bundesliga', 'world cup',
+  ],
+  casino: [
+    'casino', 'live casino', 'slot', 'slots', 'blackjack', 'roulette', 'baccarat', 'dice', 'plinko', 'mines', 'limbo', 'keno',
+    'originals', 'stake originals', 'table game', 'table games', 'game show', 'dealer', 'live dealer', 'free spins', 'bonus buy',
+    'provably fair', 'provable fairness', 'pragmatic', 'evolution', 'hacksaw', 'nolimit', 'third party game', 'third-party games',
+  ],
+  poker: ['poker', 'holdem', "hold'em", 'texas holdem', 'omaha', 'poker tournament', 'sit and go'],
+};
+
 /** VIP ranks as written by customers (normalized display form). */
 export const VIP_RANKS = [
   'Bronze',

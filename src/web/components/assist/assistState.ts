@@ -13,8 +13,10 @@ import type {
   PersonalizeRequest,
   PersonalizeResponse,
   RecommendResponse,
+  RerankResponse,
 } from '../../../shared/types';
 import { INTENT_LABELS } from '../../../shared/types';
+import { IDLE_RERANK, rerankOutcome, type RerankState } from './rerank';
 import { detectedVariables, requestVariables, templatizeReply } from './variables';
 
 /** What the reply editor shows next to the text. */
@@ -61,6 +63,8 @@ export interface AssistState {
   manualSelection: boolean;
   reply: ReplyState;
   busy: { ai: boolean; draft: boolean };
+  /** Optional AI double-check of the current result (never reorders the cards or changes the selection). */
+  rerank: RerankState;
 }
 
 export type AssistAction =
@@ -81,7 +85,14 @@ export type AssistAction =
   | { type: 'drafted'; message: string; res: DraftResponse }
   | { type: 'draftFailed' }
   | { type: 'edit'; text: string }
-  | { type: 'clear' };
+  | { type: 'clear' }
+  /** AI double-check of the result for `message` started / answered / failed / was cancelled. */
+  | { type: 'rerankStarted'; message: string }
+  | { type: 'reranked'; message: string; res: RerankResponse }
+  | { type: 'rerankFailed'; message: string }
+  | { type: 'rerankStopped'; message: string };
+
+type RerankAction = Extract<AssistAction, { type: 'rerankStarted' | 'reranked' | 'rerankFailed' | 'rerankStopped' }>;
 
 export const EMPTY_REPLY: ReplyState = {
   text: '',
@@ -105,6 +116,7 @@ export const INITIAL_ASSIST_STATE: AssistState = {
   manualSelection: false,
   reply: EMPTY_REPLY,
   busy: { ai: false, draft: false },
+  rerank: IDLE_RERANK,
 };
 
 /**
@@ -187,7 +199,29 @@ function onRecommended(state: AssistState, message: string, result: RecommendRes
     manualSelection,
     reply: selectedIds.length ? state.reply : EMPTY_REPLY,
     busy: selectedIds.length ? state.busy : { ...state.busy, ai: false },
+    rerank: IDLE_RERANK,
   };
+}
+
+/** True when an AI double-check for `message` is running and still belongs to the shown result. */
+function rerankPending(state: AssistState, message: string): boolean {
+  return state.result !== null && message === state.resultFor && state.rerank.message === message && state.rerank.status === 'running';
+}
+
+/** AI double-check actions; answers for an outdated result or a cancelled check are ignored. */
+function onRerank(state: AssistState, action: RerankAction): AssistState {
+  switch (action.type) {
+    case 'rerankStarted':
+      if (!state.result || action.message !== state.resultFor) return state;
+      return { ...state, rerank: { ...IDLE_RERANK, message: action.message, status: 'running' } };
+    case 'reranked':
+      if (!state.result || !rerankPending(state, action.message)) return state;
+      return { ...state, rerank: rerankOutcome(action.message, state.result, action.res) };
+    case 'rerankFailed':
+      return rerankPending(state, action.message) ? { ...state, rerank: { ...state.rerank, status: 'failed' } } : state;
+    case 'rerankStopped':
+      return rerankPending(state, action.message) ? { ...state, rerank: IDLE_RERANK } : state;
+  }
 }
 
 /** Pure reducer for the Assist page. */
@@ -202,7 +236,9 @@ export function assistReducer(state: AssistState, action: AssistAction): AssistS
     case 'recommended':
       return onRecommended(state, action.message, action.result);
     case 'recommendFailed':
-      return action.message === state.message ? { ...state, result: null, resultFor: action.message, recError: action.error } : state;
+      return action.message === state.message
+        ? { ...state, result: null, resultFor: action.message, recError: action.error, rerank: IDLE_RERANK }
+        : state;
     case 'select':
       return { ...state, selectedIds: action.ids, manualSelection: true, reply: { ...state.reply, pendingAi: null } };
     case 'fastReady':
@@ -239,6 +275,11 @@ export function assistReducer(state: AssistState, action: AssistAction): AssistS
       return { ...state, reply: { ...state.reply, text: action.text } };
     case 'clear':
       return INITIAL_ASSIST_STATE;
+    case 'rerankStarted':
+    case 'reranked':
+    case 'rerankFailed':
+    case 'rerankStopped':
+      return onRerank(state, action);
   }
 }
 

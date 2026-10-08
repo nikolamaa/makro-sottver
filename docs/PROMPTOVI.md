@@ -307,9 +307,9 @@ Analyze this message.
 
 ## 2. Rangiranje makroa
 
-**Kada se koristi:** Opciono, posle lokalne hibridne pretrage: AI ponovo rangira do 8 kandidata, kalibriše pouzdanost (90+ / 70–89 / 50–69 / <50) i piše razlog specifičan za kupca. Ako AI ne uspe, ostaje lokalni redosled.
+**Kada se koristi:** Opciona „AI provera preporuka“ (Settings → AI → „AI double-check of recommendations“, podrazumevano uključena kada je AI podešen). Lokalna preporuka se uvek prikaže odmah. Kratko posle toga (`POST /api/rerank`) AI u pozadini ponovo oceni do 8 lokalnih kandidata, kalibriše pouzdanost (90+ / 70–89 / 50–69 / <50) i napiše razlog specifičan za kupca. Kartice se ne preraspoređuju, pa `Alt+1..3` ostaju isti makroi: menjaju se samo procenat i razlog, najbolji izbor dobija oznaku „AI pick“, a ako je to makro van prikazanih kartica, nudi se kao „AI suggests“ (`Alt+4` ili klik). Ako AI oceni da nijedan makro ne odgovara u potpunosti, a lokalna pretraga je mislila da odgovara, prikazuje se diskretna napomena. Izbor makroa i tekst odgovora se nikad ne menjaju automatski. Ako agent promeni poruku dok provera traje, prekida se i zahtev i sam AI poziv na serveru. Ako AI nije spreman, provera je isključena, budžet je potrošen ili poziv ne uspe, ostaje lokalni rezultat bez poruke o grešci.
 
-**Zaštite:** Može da vrati samo ID-jeve kandidata koje je dobio. Nepoznati ID-jevi se odbacuju.
+**Zaštite:** Može da vrati samo ID-jeve kandidata koje je dobio. Nepoznati ID-jevi se odbacuju. Važe ista pravila kao za ostale AI pozive: pseudonimizacija ličnih podataka, režim „Strogo lokalno“ i mesečni limit troška, a potrošnja se beleži.
 
 ### Sistemski prompt
 

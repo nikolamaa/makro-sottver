@@ -1,0 +1,278 @@
+[
+  {
+    "message": "yo i sent 0.3 sol to my deposit adress like 40 mins ago and balance still says 0, the tx shows confirmed on my side",
+    "expected": "Crypto deposit pending / not credited yet",
+    "intent": "deposit_missing",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "deposited usdc on arbitrum by accident, is it gone forever??",
+    "expected": "Deposit sent on wrong network or unsupported coin/token",
+    "intent": "deposit_missing",
+    "sentiment": "confused"
+  },
+  {
+    "message": "sent EOS from my exchange but i left the memo field empty, can you find it?",
+    "expected": "XRP/EOS deposit missing MEMO/TAG",
+    "intent": "deposit_missing",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "paid 2000 rupees through upi 2 days ago, still pending on stake but my bank says its debited. what do i do",
+    "expected": "INR deposit pending - how to escalate (Enquire Now)",
+    "intent": "deposit_missing",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "withdrew to my bank account on monday and still nothing, is that normal?",
+    "expected": "Bank Transfer Withdrawal Pending - Up to 3 Business Days",
+    "intent": "withdrawal_pending",
+    "sentiment": "confused"
+  },
+  {
+    "message": "whats the fee for withdrawing ltc and is there a minimum amount?",
+    "expected": "Crypto Withdrawal Limits and Fees",
+    "intent": "withdrawal_limits",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "my eth withdrawl has been processing for 2 hours, when will it actually hit my wallet",
+    "expected": "Crypto Withdrawal Pending or Not Received",
+    "intent": "withdrawal_pending",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "which network should i pick to withdraw usdt to my exchange, trc20 or bep20?",
+    "expected": "How to Withdraw Crypto and USDT (Network and Address)",
+    "intent": "withdrawal_help",
+    "sentiment": "confused"
+  },
+  {
+    "message": "i only log in with facebook, how am i supposed to confirm a withdrawal without 2fa?",
+    "expected": "OAuth Re-Verification for Social Login Withdrawals",
+    "intent": "withdrawal_help",
+    "sentiment": "confused"
+  },
+  {
+    "message": "deposited 100 cad with interac and want to take it back out without betting but it says i need to wager first??",
+    "expected": "Please Wager Before Withdrawing - 100% Fiat Deposit Rule",
+    "intent": "wagering_requirement",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "took the welcome bonus and now every withdrawl gets denied. how do i get rid of this requirement",
+    "expected": "Active deposit bonus requirement - withdrawal or tip blocked",
+    "intent": "wagering_requirement",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "the drop code says i already claimed it but i never used it before??",
+    "expected": "Bonus Drop code error messages explained",
+    "intent": "bonus_inquiry",
+    "sentiment": "confused"
+  },
+  {
+    "message": "how do you guys work out the monthly bonus amount? mine was tiny this time",
+    "expected": "Monthly Bonus - How the Amount Is Calculated",
+    "intent": "bonus_inquiry",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "missed my reload yesterday cause i was at work, can support give it to me again?",
+    "expected": "Reload - Missed Claim, Claim Rules & Expiry",
+    "intent": "bonus_inquiry",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "how much wagering gets me to silver? just started playing here",
+    "expected": "VIP Program: How to Join and Level Requirements",
+    "intent": "vip_program",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "my phone broke and the authenticator app is gone with it, now i cant get into my account",
+    "expected": "Lost access to 2FA - recovery process",
+    "intent": "account_access",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "someone messaged me on telegram saying they're stake support and asked for my password, is that really you?",
+    "expected": "Suspicious email or link - verify official Stake channels",
+    "intent": "account_security",
+    "sentiment": "confused"
+  },
+  {
+    "message": "can i send my drivers license instead of a passport for kyc? does it need both sides",
+    "expected": "Proof of Identity - Accepted Documents & Photo Requirements",
+    "intent": "kyc_verification",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "want to block myself from the sportsbook for 90 days but keep the casino open",
+    "expected": "Product Exclusion - Block Casino, Sportsbook or Poker Only",
+    "intent": "responsible_gambling",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "i want to cap how much i can lose each month, where do i set that up?",
+    "expected": "Deposit, Loss & Wager Limits - Setup & Cooling-Off",
+    "intent": "responsible_gambling",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "my basketball bet got voided because the game was postponed, do i get my money back?",
+    "expected": "Voided Bet Explained",
+    "intent": "sports_betting",
+    "sentiment": "confused"
+  },
+  {
+    "message": "the cash out option disappeared from my bet halfway through the match, why??",
+    "expected": "Cashout Not Available",
+    "intent": "sports_betting",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "how does it work if one leg in my 4 fold parlay gets voided? do i lose the whole thing",
+    "expected": "Voided Leg in Multi vs Same Game Multi",
+    "intent": "sports_betting",
+    "sentiment": "confused"
+  },
+  {
+    "message": "slot froze during my free spins and kicked me out, did i lose the spins??",
+    "expected": "Game froze / disconnected during bonus or free spins",
+    "intent": "technical_issue",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "my cousin signed up with my referral link but he doesnt show up in my referrals at all",
+    "expected": "Affiliate Referral Not Tracked",
+    "intent": "affiliate",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "is it possible to reactivate an account i closed last month?",
+    "expected": "Account Closure - Close Your Account",
+    "intent": "account_closure",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "two questions: whats the minimum bet on mines, and is there a max profit per bet?",
+    "expected": "Casino betting limits (min / max bet and max profit)",
+    "intent": "betting_limits",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "my btc deposit still hasnt shown up after an hour. also whats the minimum withdrawal for btc?",
+    "expected": "Crypto deposit pending / not credited yet",
+    "intent": "deposit_missing",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "compliance wants proof of income and im a freelancer, what documents work?",
+    "expected": "Source of Income - Accepted Documents",
+    "intent": "kyc_verification",
+    "sentiment": "confused"
+  },
+  {
+    "message": "i keep losing on limbo, theres no way its fair",
+    "expected": "Player says games are rigged: provable fairness",
+    "intent": "complaint",
+    "sentiment": "angry"
+  },
+  {
+    "message": "can i change my username? the one i picked is kinda embarrassing lol",
+    "expected": "NONE",
+    "intent": "general",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "is there a stake app for iphone or only the website?",
+    "expected": "NONE",
+    "intent": "technical_issue",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "do you guys stream the football matches live on the sportsbook?",
+    "expected": "NONE",
+    "intent": "sports_betting",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "whats the house edge on blackjack compared to baccarat?",
+    "expected": "NONE",
+    "intent": "casino_games",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "can i bet on esports here? like cs2 or valorant",
+    "expected": "NONE",
+    "intent": "sports_betting",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "do i have to pay tax on my winnings from stake?",
+    "expected": "NONE",
+    "intent": "general",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "my poker tournament ticket vanished from my account, where did it go?",
+    "expected": "NONE",
+    "intent": "casino_games",
+    "sentiment": "confused"
+  },
+  {
+    "message": "is there a max payout on sports parlays? thinking about a big 10 leg multi",
+    "expected": "NONE",
+    "intent": "betting_limits",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "is there a fee when i convert usdt to btc inside the wallet?",
+    "expected": "NONE",
+    "intent": "payment_methods",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "can my wife make her own account on the same wifi or will that get us banned?",
+    "expected": "NONE",
+    "intent": "general",
+    "sentiment": "confused"
+  },
+  {
+    "message": "how do i export my full transaction history as a csv for my accountant",
+    "expected": "NONE",
+    "intent": "general",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "what happens to my vip rank if i stop playing for a few months, does it drop?",
+    "expected": "NONE",
+    "intent": "vip_program",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "how do i remove my saved card from the wallet? dont want it stored anymore",
+    "expected": "NONE",
+    "intent": "payment_methods",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "i moved house, how do i update the address on my profile?",
+    "expected": "NONE",
+    "intent": "general",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "are there any free bet promos for the champions league final?",
+    "expected": "NONE",
+    "intent": "bonus_inquiry",
+    "sentiment": "positive"
+  },
+  {
+    "message": "is stake legal to use in australia?",
+    "expected": "NONE",
+    "intent": "general",
+    "sentiment": "neutral"
+  }
+]

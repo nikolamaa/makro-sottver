@@ -4,8 +4,9 @@ import { getState, setState } from '../../store';
 import { toast } from '../../ui';
 import { assistReducer, INITIAL_ASSIST_STATE, NEW_MACRO_DRAFT_KEY, type AssistAction, type AssistState } from './assistState';
 import { shouldAdoptClipboard } from './clipboard';
-import { draftFixture, personalizeFixture, resultFixture } from './testFixtures';
-import { createAssistActions } from './useAssist';
+import { IDLE_RERANK } from './rerank';
+import { draftFixture, personalizeFixture, recommendationFixture, rerankFixture, resultFixture } from './testFixtures';
+import { createAssistActions, RERANK_DELAY_MS, scheduleRerank, shouldRerank } from './useAssist';
 
 vi.mock('../../ui', async (importOriginal) => ({ ...(await importOriginal<typeof import('../../ui')>()), toast: vi.fn() }));
 
@@ -192,6 +193,108 @@ describe('AI polish', () => {
     await vi.waitFor(() => expect(stateRef.current.busy.ai).toBe(false));
     expect(stateRef.current.reply.text).toBe('Fast text');
     expect(toastTexts()).toContain('AI polish failed: Budget exceeded. Keeping the fast version.');
+  });
+});
+
+describe('AI double-check', () => {
+  const aiAnswer = rerankFixture([recommendationFixture('b', { confidence: 93, reason: 'AI: best fit.' }), recommendationFixture('a', { confidence: 60 })]);
+
+  /** A reducer-backed dispatch that also records the action types. */
+  function store(initial: AssistState) {
+    const ref = { current: initial };
+    const types: string[] = [];
+    const dispatch = (action: AssistAction) => {
+      types.push(action.type);
+      ref.current = assistReducer(ref.current, action);
+    };
+    return { ref, types, dispatch };
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('asks the server after the delay and applies the answer in place', async () => {
+    vi.useFakeTimers();
+    routes['POST /api/rerank'] = () => aiAnswer;
+    const { ref, types, dispatch } = store(withReply('Fast text'));
+    scheduleRerank(MESSAGE, dispatch);
+    await vi.advanceTimersByTimeAsync(RERANK_DELAY_MS - 1);
+    expect(calls).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(calls).toEqual([{ route: 'POST /api/rerank', body: { message: MESSAGE } }]);
+    await vi.waitFor(() => expect(types).toEqual(['rerankStarted', 'reranked']));
+    expect(ref.current.rerank).toMatchObject({ status: 'done', topId: 'b' });
+    expect(ref.current.result?.recommendations.map((r) => r.macroId)).toEqual(['a', 'b', 'c']);
+    expect(ref.current.selectedIds).toEqual(['a']);
+    expect(ref.current.reply.text).toBe('Fast text');
+  });
+
+  it('sends nothing when cancelled before the delay', async () => {
+    vi.useFakeTimers();
+    const { types, dispatch } = store(withReply('x'));
+    scheduleRerank(MESSAGE, dispatch)();
+    await vi.advanceTimersByTimeAsync(RERANK_DELAY_MS * 2);
+    expect(calls).toEqual([]);
+    expect(types).toEqual([]);
+  });
+
+  it('aborts a running check when cancelled and drops its indicator', async () => {
+    let aborted = false;
+    vi.mocked(fetch).mockImplementationOnce(
+      (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            aborted = true;
+            reject(new DOMException('The operation was aborted.', 'AbortError'));
+          });
+        }),
+    );
+    const { ref, types, dispatch } = store(withReply('x'));
+    const cancel = scheduleRerank(MESSAGE, dispatch, 0);
+    await vi.waitFor(() => expect(ref.current.rerank.status).toBe('running'));
+    cancel();
+    await vi.waitFor(() => expect(aborted).toBe(true));
+    expect(types).toEqual(['rerankStarted', 'rerankStopped']);
+    expect(ref.current.rerank).toBe(IDLE_RERANK);
+  });
+
+  it('fails silently', async () => {
+    vi.mocked(fetch).mockImplementationOnce(async () => new Response(JSON.stringify({ error: 'Internal error' }), { status: 500 }));
+    const { ref, dispatch } = store(withReply('x'));
+    scheduleRerank(MESSAGE, dispatch, 0);
+    await vi.waitFor(() => expect(ref.current.rerank.status).toBe('failed'));
+    expect(toastTexts()).toEqual([]);
+  });
+
+  it('runs once per shown result, only when enabled', () => {
+    const shown = withReply('x');
+    expect(shouldRerank(shown, true)).toBe(true);
+    expect(shouldRerank(shown, false)).toBe(false);
+    expect(shouldRerank({ ...shown, message: `${MESSAGE}!` }, true)).toBe(false);
+    expect(shouldRerank({ ...shown, result: resultFixture({ recommendations: [] }) }, true)).toBe(false);
+    expect(shouldRerank({ ...shown, rerank: { ...IDLE_RERANK, message: MESSAGE, status: 'done' } }, true)).toBe(false);
+    expect(shouldRerank({ ...shown, rerank: { ...IDLE_RERANK, message: MESSAGE, status: 'failed' } }, true)).toBe(false);
+    // A check cancelled mid-flight (still marked running until the reducer catches up) is started again.
+    expect(shouldRerank({ ...shown, rerank: { ...IDLE_RERANK, message: MESSAGE, status: 'running' } }, true)).toBe(true);
+    expect(shouldRerank({ ...shown, rerank: { ...IDLE_RERANK, message: 'older', status: 'done' } }, true)).toBe(true);
+  });
+
+  it('Alt+4 uses the AI suggestion like a quick-search pick, never on its own', async () => {
+    const res = rerankFixture([recommendationFixture('d', { confidence: 90 })]);
+    const state = [
+      { type: 'rerankStarted', message: MESSAGE },
+      { type: 'reranked', message: MESSAGE, res },
+    ].reduce((s, a) => assistReducer(s, a as AssistAction), withReply('Fast text'));
+    expect(state.selectedIds).toEqual(['a']);
+    const { actions, stateRef } = setup(state);
+    actions.pickAiSuggestion();
+    expect(stateRef.current.selectedIds).toEqual(['d']);
+    await vi.waitFor(() => expect(eventBodies()).toEqual([{ type: 'recommendation_selected', macroIds: ['d'] }]));
+
+    const none = setup(withReply('x'));
+    none.actions.pickAiSuggestion();
+    expect(none.stateRef.current.selectedIds).toEqual(['a']);
   });
 });
 

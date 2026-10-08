@@ -6,6 +6,7 @@ import { AnalysisPanel } from './AnalysisPanel';
 import { EMPTY_REPLY, type ReplyState } from './assistState';
 import { MatchBanners } from './MatchBanners';
 import { RecommendationList } from './RecommendationList';
+import { IDLE_RERANK, type RerankState } from './rerank';
 import { ReplyEditor } from './ReplyEditor';
 import { analysisFixture, personalizeFixture, recommendationFixture, resultFixture } from './testFixtures';
 import type { AssistActions } from './useAssist';
@@ -86,6 +87,60 @@ describe('RecommendationList', () => {
     expect(out).toContain('from search');
     expect(out).toContain('Picked macro');
     expect(out).toContain('part 2');
+  });
+
+  describe('AI double-check', () => {
+    const done = (partial: Partial<RerankState>): RerankState => ({ ...IDLE_RERANK, message: 'm', status: 'done', ...partial });
+
+    it('shows nothing extra while the AI is off or idle', () => {
+      const out = text(html(RecommendationList, { ...base, rerank: IDLE_RERANK }));
+      expect(out).not.toContain('AI');
+      expect(text(html(RecommendationList, base))).toBe(out);
+    });
+
+    it('shows a small indicator while checking', () => {
+      expect(text(html(RecommendationList, { ...base, rerank: { ...IDLE_RERANK, message: 'm', status: 'running' } }))).toContain('AI checking…');
+      expect(text(html(RecommendationList, { ...base, rerank: done({}) }))).not.toContain('AI checking');
+      expect(text(html(RecommendationList, { ...base, rerank: { ...IDLE_RERANK, message: 'm', status: 'failed' } }))).not.toContain('AI');
+    });
+
+    it('updates scored cards in place and badges the AI pick without reordering', () => {
+      const rerank = done({ scores: { b: { confidence: 93, reason: 'AI says this fits best.' } }, topId: 'b' });
+      const markup = html(RecommendationList, { ...base, rerank });
+      const out = text(markup);
+      expect(out.indexOf('Macro a')).toBeLessThan(out.indexOf('Macro b'));
+      expect(out.indexOf('Macro b')).toBeLessThan(out.indexOf('Macro c'));
+      expect(out).toContain('Alt 2 Macro b AI pick');
+      expect(out.match(/AI pick/g)).toHaveLength(1);
+      expect(out).toContain('93%');
+      expect(out).toContain('AI AI says this fits best.');
+      expect(markup).toContain('after the AI double-check (local match 82%)');
+    });
+
+    it('caps and explains a card the AI ranked below its answer', () => {
+      const rerank = done({ scores: { a: { confidence: 70, reason: 'AI: partly.' } }, topId: 'd', floor: 55 });
+      const markup = html(RecommendationList, { ...base, rerank });
+      const out = text(markup);
+      expect(out.indexOf('Macro a')).toBeLessThan(out.indexOf('Macro b'));
+      expect(out).toMatch(/Macro b .*55%/);
+      expect(markup).toContain('The AI double-check ranks other macros higher (local match 82%)');
+    });
+
+    it('offers the AI suggestion outside the cards and labels it once picked', () => {
+      const suggestion = recommendationFixture('p', { title: 'Picked macro', confidence: 91 });
+      const rerank = done({ topId: 'p', suggestion });
+      const out = text(html(RecommendationList, { ...base, rerank }));
+      expect(out).toContain('AI suggests: Picked macro (press Alt 4 or click to use)');
+
+      const used = text(html(RecommendationList, { ...base, rerank, selectedIds: ['p'] }));
+      expect(used).not.toContain('AI suggests');
+      expect(used).toContain('AI pick Picked macro');
+      expect(used).not.toContain('from search');
+    });
+
+    it('hints when the AI finds no macro that fully answers the message', () => {
+      expect(text(html(RecommendationList, { ...base, rerank: done({ noGoodMatch: true }) }))).toContain('AI: no macro fully answers this');
+    });
   });
 
   it('shows skeletons, the empty state and stale results', () => {

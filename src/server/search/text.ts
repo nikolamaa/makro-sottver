@@ -35,6 +35,44 @@ const STOPWORDS: ReadonlySet<string> = new Set(
   ).split(' '),
 );
 
+/**
+ * Content words that are not stopwords (they still take part in lexical matching) but say nothing about what a
+ * message is about: common verbs, vague adjectives/adverbs, time words and chat filler. They are never shown as
+ * matched terms and carry no weight when measuring how much of a question a macro covers.
+ */
+const GENERIC_WORDS: ReadonlySet<string> = new Set(
+  (
+    'go goes going gone went get getting take takes taking took taken make makes making made come comes coming came ' +
+    'give gives giving gave say says saying said tell tells telling told know knows knew think thinks thought see sees ' +
+    'seen saw look looks looking looked try tries trying tried put puts use uses using used work works working worked ' +
+    'ask asks asking asked find finds found keep keeps kept mean means meant seem seems happen happens happened ' +
+    'start starts started let thing things stuff something anything everything nothing someone anyone everyone ' +
+    'long short quick quickly small big bigger biggest bad good great fine nice right whole sure true real actual actually ' +
+    'literally exactly usually normally already anymore again forever ever soon later now today tonight tomorrow ' +
+    'yesterday time times day days week weeks month months year years hour hours minute minutes second seconds ' +
+    'morning evening night ago since first last next new old same different other another many much more less ' +
+    'lot lots bit way kind sort part instead else back maybe possible probably honestly basically guess idea ' +
+    'question questions answer problem issue thanks lol omg btw ok okay yeah hey hi hello guys bro mate buddy friend ' +
+    'stake com www http https'
+  ).split(' '),
+);
+
+const GENERIC_SUFFIXES = ['s', 'es', 'd', 'ed', 'ing'] as const;
+
+/**
+ * True for a lowercase word that carries no topic ("going", "takes", "yesterday", "stake"). Matches the word list
+ * and simple inflections of it; deliberately not the stem, which would also hit "weekly" (stem "week").
+ */
+export function isGenericWord(word: string): boolean {
+  if (GENERIC_WORDS.has(word)) return true;
+  for (const suffix of GENERIC_SUFFIXES) {
+    if (word.length <= suffix.length + 2 || !word.endsWith(suffix)) continue;
+    const base = word.slice(0, -suffix.length);
+    if (GENERIC_WORDS.has(base) || GENERIC_WORDS.has(`${base}e`)) return true;
+  }
+  return false;
+}
+
 /** Lowercase word tokens; apostrophes inside words are dropped ("can't" -> "cant", "player's" -> "players"). */
 export function tokenize(text: string): string[] {
   const cleaned = text.toLowerCase().replace(APOSTROPHE_RE, '');

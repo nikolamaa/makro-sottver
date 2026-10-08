@@ -7,12 +7,14 @@
  * pending write of the same macro. Searches never wait for mutations.
  */
 import type { Analysis, Id, Intent, Macro, Recommendation } from '../../shared/types.js';
+import { listVariables } from '../../shared/template.js';
 import { INTENT_LABELS } from '../../shared/types.js';
 import { matchConcepts } from './concepts.js';
 import { createFallbackEmbedder, type Embedder } from './embedder.js';
 import { createLexicalIndex, searchLexical, toIndexDoc, type LexicalIndex } from './lexical.js';
 import { buildLexicalQuery } from './query.js';
 import { rankMacros, type IndexedMacro } from './ranker.js';
+import { macroProducts, messageSignals } from './signals.js';
 import { stripTemplateVariables } from './text.js';
 
 export interface EmbeddingCache {
@@ -65,6 +67,17 @@ function headPassage(m: Macro): string {
 /** Passage with what the macro says: body without template variables, first 800 chars. */
 function bodyPassage(m: Macro): string {
   return stripTemplateVariables(m.body).replace(/\s+/g, ' ').trim().slice(0, BODY_PASSAGE_CHARS);
+}
+
+/**
+ * Concepts and products used by the relevance signals. Concepts come from the head and body passages plus the
+ * names of template variables ({{bet_id}} -> "bet id"): a macro that asks for the bet ID is about bet IDs.
+ */
+function relevanceFeatures(m: Macro, head: string, body: string): Pick<IndexedMacro, 'concepts' | 'headConcepts' | 'products'> {
+  const variables = listVariables(m.body).map((v) => v.replace(/_/g, ' '));
+  const headConcepts = new Set(matchConcepts(head).keys());
+  const concepts = new Set([...headConcepts, ...matchConcepts(`${body}\n${variables.join('\n')}`).keys()]);
+  return { concepts, headConcepts, products: macroProducts(m) };
 }
 
 function errorMessage(err: unknown): string {
@@ -170,6 +183,7 @@ export class MacroIndex {
       query,
       lexicalHits: searchLexical(state.lexical, query),
       analysis,
+      signals: messageSignals(message, analysis),
       maxResults: opts.maxResults,
       minConfidence: opts.minConfidence,
     });
@@ -248,7 +262,7 @@ export class MacroIndex {
     for (const { macro, key } of items) {
       const head = headPassage(macro);
       const body = bodyPassage(macro);
-      const entry: Entry = { macro, key, head: null, body: null, concepts: new Set(matchConcepts(`${head}\n${body}`).keys()) };
+      const entry: Entry = { macro, key, head: null, body: null, ...relevanceFeatures(macro, head, body) };
       entries.push(entry);
       for (const [part, text] of [['head', head], ['body', body]] as const) {
         if (!text) continue;

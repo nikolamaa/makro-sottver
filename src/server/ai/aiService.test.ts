@@ -519,6 +519,24 @@ describe('rerank', () => {
     expect(recorded).toEqual([{ purpose: 'rerank', usage: USAGE }]);
   });
 
+  it('hands the cancel signal to the provider and keeps the local ranking once the request is dropped', async () => {
+    const ctrl = new AbortController();
+    const live = fakeProvider({ answer: rankAll });
+    await expect(serviceWith(live).service.rerank({ ...input, signal: ctrl.signal })).resolves.toMatchObject({ aiUsed: true });
+    expect(live.requests[0]!.signal).toBe(ctrl.signal);
+
+    // Already dropped: the provider is not called at all.
+    ctrl.abort();
+    const skipped = fakeProvider({ answer: rankAll });
+    await expect(serviceWith(skipped).service.rerank({ ...input, signal: ctrl.signal })).resolves.toEqual(unchanged);
+    expect(skipped.requests).toHaveLength(0);
+
+    // Dropped while the provider was working: local ranking, nothing billed is recorded.
+    const cancelled = serviceWith(fakeProvider({ error: new AiError('cancelled', 'The AI request was cancelled.') }));
+    await expect(cancelled.service.rerank({ ...input, signal: new AbortController().signal })).resolves.toEqual(unchanged);
+    expect(cancelled.recorded).toEqual([]);
+  });
+
   it('keeps the local ranking when the answer names none of the candidates', async () => {
     const provider = fakeProvider({ answer: () => ({ ranked: [{ id: 'ghost', confidence: 99, reason: 'x' }], no_good_match: false, missing_topics: [] }) });
     const { service, recorded } = serviceWith(provider);
