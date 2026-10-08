@@ -5,9 +5,11 @@
  * - transformers: @huggingface/transformers (optional dependency) running Xenova/bge-small-en-v1.5 (q8) on CPU.
  *                 Model files are downloaded once into `cacheDir`. Queries are prefixed with the BGE query
  *                 instruction "Represent this sentence for searching relevant passages: ".
- * - ollama:       local Ollama server, POST {url}/api/embed {model, input}.
+ * - ollama:       local Ollama server, POST {url}/api/embed {model, input}. Only used when the Ollama URL is on this
+ *                 computer: embeddings see every customer message and the whole decrypted library, unmasked.
  */
 import type { AppSettings, EmbedderStatus } from '../../shared/types.js';
+import { isLoopbackUrl } from '../ai/provider.js';
 import { BUILTIN_DIM, BUILTIN_MODEL, vectorize } from './vectorizer.js';
 
 export type EmbedKind = 'query' | 'passage';
@@ -370,14 +372,32 @@ async function tryPreferred(
   }
 }
 
+/** Status detail when the Ollama URL points to another computer. */
+export const REMOTE_OLLAMA_EMBEDDINGS_DETAIL =
+  'Ollama embeddings are only used with a local Ollama (localhost): the Ollama URL points to another computer, so built-in vectors are used.';
+
+function logSafely(log: ResolveEmbedderOptions['log'], msg: string): void {
+  try {
+    log?.(msg);
+  } catch {
+    // A failing logger must not break embedder selection.
+  }
+}
+
 /**
  * Pick and initialize an embedder according to settings. Never throws:
  *  - 'builtin' -> builtin
  *  - 'transformers' / 'ollama' -> that provider, or builtin (status.detail explains the fallback) if init fails
+ *  - 'ollama' with a non-loopback URL -> builtin without contacting it (messages and macros never leave the computer
+ *    for search, whatever the privacy settings)
  *  - 'auto' -> transformers if it initializes, otherwise builtin
  */
 export async function resolveEmbedder(settings: AppSettings['embeddings'], opts: ResolveEmbedderOptions): Promise<Embedder> {
   if (settings.provider === 'builtin') return createBuiltinEmbedder();
+  if (settings.provider === 'ollama' && !isLoopbackUrl(opts.ollamaUrl)) {
+    logSafely(opts.log, REMOTE_OLLAMA_EMBEDDINGS_DETAIL);
+    return createFallbackEmbedder(REMOTE_OLLAMA_EMBEDDINGS_DETAIL);
+  }
 
   const result = await tryPreferred(settings, opts);
   if ('embedder' in result) return result.embedder;
@@ -388,11 +408,7 @@ export async function resolveEmbedder(settings: AppSettings['embeddings'], opts:
     settings.provider === 'auto'
       ? `Using built-in vectors: ${label} not available. ${result.failure}`
       : `Fell back to built-in vectors: ${label} failed. ${result.failure}`;
-  try {
-    opts.log?.(detail);
-  } catch {
-    // A failing logger must not break embedder selection.
-  }
+  logSafely(opts.log, detail);
   return createFallbackEmbedder(detail);
 }
 

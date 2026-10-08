@@ -278,6 +278,29 @@ describe('resolveEmbedder', () => {
     expect(t.provider).toBe('builtin');
   });
 
+  it("'ollama' with a URL on another computer falls back to builtin without sending anything", async () => {
+    for (const ollamaUrl of ['http://192.168.1.20:11434', 'https://ollama.example.com', 'http://127.0.0.1.evil.com:11434']) {
+      const fetch = vi.fn(async () => jsonResponse({ embeddings: [[0, 1]] }));
+      const log = vi.fn();
+      const e = await resolveEmbedder({ provider: 'ollama', ollamaModel: 'nomic-embed-text' }, { ...base, ollamaUrl, fetch, log });
+      expect(e.provider).toBe('builtin');
+      expect(e.status().state).toBe('ready');
+      expect(e.status().detail).toMatch(/only used with a local Ollama \(localhost\)/);
+      await e.embed(['my email is john.doe@example.com'], 'query');
+      expect(fetch).not.toHaveBeenCalled();
+      expect(log).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("'ollama' on this computer (localhost, 127.x, ::1) is used", async () => {
+    for (const ollamaUrl of ['http://localhost:11434', 'http://127.0.0.2:11434', 'http://[::1]:11434']) {
+      const fetch = vi.fn(async () => jsonResponse({ embeddings: [[0, 1]] }));
+      const e = await resolveEmbedder({ provider: 'ollama', ollamaModel: 'nomic-embed-text' }, { ...base, ollamaUrl, fetch });
+      expect(e.provider).toBe('ollama');
+      expect(fetch).toHaveBeenCalled();
+    }
+  });
+
   it("'ollama' returns the ollama embedder when the server answers", async () => {
     const e = await resolveEmbedder(
       { provider: 'ollama', ollamaModel: 'nomic-embed-text' },

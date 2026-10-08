@@ -11,8 +11,8 @@ import type { ProblemLog } from './problems.js';
 
 /** Import limits (items, content size, and per-field limits accepted by the commit endpoint). */
 export const IMPORT_LIMITS = {
-  maxItems: 5000,
-  maxContentBytes: 2 * 1024 * 1024,
+  maxItems: 20_000,
+  maxContentBytes: 30 * 1024 * 1024,
   title: 200,
   body: 20_000,
   category: 80,
@@ -36,6 +36,8 @@ export interface RawMacro {
   /** Location used in messages, e.g. "Row 4", "Item 2" or "Block 3". */
   label: string;
   values: Partial<Record<ImportField, unknown>>;
+  /** Already validated state from MacroPilot's own export format (archived, favorite, category color). */
+  extras?: Pick<ImportItem, 'archived' | 'isFavorite' | 'categoryColor'>;
 }
 
 /** Records read from one import source. */
@@ -85,7 +87,8 @@ const INTENT_LOOKUP: ReadonlyMap<string, Intent> = new Map(
 /**
  * Validate raw records into import items. Records with a missing title/body or an over-long field are
  * reported and skipped; list overflows and unknown intents are reported and trimmed. `duplicateOf` is set
- * from `existing` by normalized title, and repeated titles inside the same import are reported.
+ * from `existing` by normalized title, and repeated titles inside the same import are reported. Archived items
+ * (backups) are restored as archived, so they are never duplicates of an active macro.
  */
 export function buildItems(
   raws: readonly RawMacro[],
@@ -103,6 +106,10 @@ export function buildItems(
   for (const raw of raws) {
     const item = normalizeItem(raw, log, options);
     if (!item) continue;
+    if (item.archived) {
+      items.push(item);
+      continue;
+    }
     const key = titleKey(item.title);
     item.duplicateOf = existingByTitle.get(key) ?? null;
     const firstLabel = firstLabelByTitle.get(key);
@@ -118,7 +125,7 @@ export function titleKey(title: string): string {
   return title.trim().toLowerCase().replace(WHITESPACE_RUN_RE, ' ');
 }
 
-function normalizeItem({ label, values }: RawMacro, log: ProblemLog, options: NormalizeOptions): ImportItem | null {
+function normalizeItem({ label, values, extras }: RawMacro, log: ProblemLog, options: NormalizeOptions): ImportItem | null {
   const title = cleanLine(values.title);
   const multiline = cleanMultiline(values.body);
   const body = options.convertIntercom ? convertIntercomVariables(multiline) : multiline;
@@ -152,6 +159,7 @@ function normalizeItem({ label, values }: RawMacro, log: ProblemLog, options: No
     shortcut,
     facts: readFacts(values.facts, label, log),
     duplicateOf: null,
+    ...extras,
   };
 }
 

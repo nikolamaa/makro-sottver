@@ -28,7 +28,7 @@ import {
   type VerificationStatus,
 } from '../../shared/types.js';
 import { rollupVerification } from '../../shared/verification.js';
-import type { Cipher } from '../crypto/cipher.js';
+import { DecryptionError, type Cipher } from '../crypto/cipher.js';
 import type { Db } from './database.js';
 
 // ---------------------------------------------------------------------------
@@ -73,6 +73,19 @@ function uniqueTrimmed(values: unknown): string[] {
 const trimmed = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
 
 const nullableTrimmed = (value: unknown): string | null => trimmed(value) || null;
+
+/**
+ * Runs `decode` and returns null when the row cannot be decrypted (corrupted blob), so one bad row never stops
+ * startup or an export. Other errors still throw.
+ */
+function decodeOrNull<T>(decode: () => T): T | null {
+  try {
+    return decode();
+  } catch (err) {
+    if (err instanceof DecryptionError) return null;
+    throw err;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // MetaRepo
@@ -212,6 +225,7 @@ const SQL = {
   statusesOf: 'SELECT status FROM facts WHERE macro_id = ?',
   setVerification: 'UPDATE macros SET verification = ? WHERE id = ?',
   macroExists: 'SELECT 1 AS found FROM macros WHERE id = ?',
+  currentContentKeys: `SELECT v.content_hmac ${MACRO_FROM}`,
 } as const;
 
 const versionAad = (macroId: Id, version: number): string => `macro_versions:${macroId}:${version}`;
@@ -233,6 +247,8 @@ const checkedAtFor = (status: FactStatus, now: string): string | null => (status
 /** Macros with encrypted, versioned content and per-macro facts (macros, macro_versions, facts tables). */
 export class MacroRepo {
   private readonly stmt: (sql: string) => StatementSync;
+  /** Macros whose current content or one of whose facts could not be decrypted when last read (see unreadableIds). */
+  private readonly unreadable = new Set<Id>();
 
   constructor(
     private readonly db: Db,
@@ -241,34 +257,83 @@ export class MacroRepo {
     this.stmt = statementCache(db);
   }
 
-  /** All macros with current content + facts, decrypted. Archived excluded unless includeArchived. Sorted by title (case-insensitive). */
+  /**
+   * All macros with current content + facts, decrypted. Archived excluded unless includeArchived. Sorted by title
+   * (case-insensitive). A macro whose current version cannot be decrypted is left out and a fact that cannot be
+   * decrypted is dropped from its macro; both are recorded in unreadableIds() (ids only, never content).
+   */
   listAll(opts?: { includeArchived?: boolean }): Macro[] {
     const all = opts?.includeArchived === true;
     const rows = this.stmt(all ? SQL.listMacrosAll : SQL.listMacros).all() as unknown as MacroRow[];
     const factRows = this.stmt(all ? SQL.listFactsAll : SQL.listFacts).all() as unknown as FactRow[];
+    const failed = new Set<Id>();
     const factsByMacro = new Map<Id, Fact[]>();
     for (const row of factRows) {
+      const fact = decodeOrNull(() => this.toFact(row));
+      if (!fact) {
+        failed.add(row.macro_id);
+        continue;
+      }
       let list = factsByMacro.get(row.macro_id);
       if (!list) {
         list = [];
         factsByMacro.set(row.macro_id, list);
       }
-      list.push(this.toFact(row));
+      list.push(fact);
     }
-    const macros = rows.map((row) => this.toMacro(row, factsByMacro.get(row.id) ?? []));
+    const macros: Macro[] = [];
+    for (const row of rows) {
+      const macro = decodeOrNull(() => this.toMacro(row, factsByMacro.get(row.id) ?? []));
+      if (macro) macros.push(macro);
+      else failed.add(row.id);
+    }
+    if (all) this.unreadable.clear();
+    else for (const row of rows) this.unreadable.delete(row.id);
+    for (const id of failed) this.unreadable.add(id);
     return macros.sort((a, b) => titleCollator.compare(a.title, b.title) || (a.id < b.id ? -1 : 1));
   }
 
+  /** The macro, or null when it does not exist or its current version cannot be decrypted (see unreadableIds). */
   get(id: Id): Macro | null {
     const row = this.stmt(SQL.getMacro).get(id) as unknown as MacroRow | undefined;
     if (!row) return null;
-    const facts = (this.stmt(SQL.factsOf).all(id) as unknown as FactRow[]).map((f) => this.toFact(f));
-    return this.toMacro(row, facts);
+    let readable = true;
+    const facts: Fact[] = [];
+    for (const factRow of this.stmt(SQL.factsOf).all(id) as unknown as FactRow[]) {
+      const fact = decodeOrNull(() => this.toFact(factRow));
+      if (fact) facts.push(fact);
+      else readable = false;
+    }
+    const macro = decodeOrNull(() => this.toMacro(row, facts));
+    if (macro && readable) this.unreadable.delete(id);
+    else this.unreadable.add(id);
+    return macro;
+  }
+
+  /**
+   * Ids of macros found corrupted by the latest reads: their current content could not be decrypted (the macro is
+   * skipped) or one of their facts could not (the fact is skipped). Saving new content or facts repairs a macro.
+   */
+  unreadableIds(): Id[] {
+    return [...this.unreadable];
   }
 
   /** HMAC of the current version's canonical content (used as embedding cache key). */
   contentKey(id: Id): string | null {
     return this.currentVersion(id)?.content_hmac ?? null;
+  }
+
+  /** Current content HMAC of every macro, archived and unreadable ones included (no decryption needed). */
+  currentContentKeys(): string[] {
+    return (this.stmt(SQL.currentContentKeys).all() as { content_hmac: string }[]).map((row) => row.content_hmac);
+  }
+
+  /**
+   * Embedding vectors are derived from macro content, so they go with it: drops cached vectors (every model) whose
+   * key is not in `keep` (see EmbeddingRepo.pruneExcept). Returns the number of rows deleted.
+   */
+  pruneEmbeddings(keep: ReadonlySet<string>, onlyModel?: string): number {
+    return new EmbeddingRepo(this.db, this.cipher).pruneExcept(keep, onlyModel);
   }
 
   /** Create macro (version 1) + facts in one transaction. `at` lets seed/import set a timestamp. */
@@ -317,6 +382,7 @@ export class MacroRepo {
    */
   hardDelete(id: Id): void {
     this.mustChange(this.stmt(SQL.deleteMacro).run(id).changes);
+    this.unreadable.delete(id);
   }
 
   setFavorite(id: Id, favorite: boolean): Macro {
@@ -329,10 +395,10 @@ export class MacroRepo {
     this.stmt(SQL.recordUse).run(iso(at), id);
   }
 
-  /** Newest first. */
+  /** Newest first. Versions that cannot be decrypted (corrupted rows) are left out. */
   listVersions(id: Id): MacroVersion[] {
     const rows = this.stmt(SQL.listVersions).all(id) as unknown as VersionRow[];
-    return rows.map((row) => this.toVersion(id, row));
+    return rows.flatMap((row) => decodeOrNull(() => this.toVersion(id, row)) ?? []);
   }
 
   /**
@@ -522,6 +588,7 @@ function categoryName(value: unknown): string {
 /** Macro categories with encrypted name/color; names are unique case-insensitively. */
 export class CategoryRepo {
   private readonly stmt: (sql: string) => StatementSync;
+  private readonly unreadable = new Set<Id>();
 
   constructor(
     private readonly db: Db,
@@ -530,12 +597,22 @@ export class CategoryRepo {
     this.stmt = statementCache(db);
   }
 
-  /** Sorted by sort, then name. */
+  /** Sorted by sort, then name. Categories that cannot be decrypted are left out (see unreadableIds). */
   list(): Category[] {
     const rows = this.stmt('SELECT id, sort, payload FROM categories').all() as unknown as CategoryRow[];
-    return rows
-      .map((row) => this.toCategory(row))
-      .sort((a, b) => a.sort - b.sort || titleCollator.compare(a.name, b.name));
+    const categories: Category[] = [];
+    this.unreadable.clear();
+    for (const row of rows) {
+      const category = decodeOrNull(() => this.toCategory(row));
+      if (category) categories.push(category);
+      else this.unreadable.add(row.id);
+    }
+    return categories.sort((a, b) => a.sort - b.sort || titleCollator.compare(a.name, b.name));
+  }
+
+  /** Ids of categories whose row could not be decrypted by the latest list(). */
+  unreadableIds(): Id[] {
+    return [...this.unreadable];
   }
 
   /** Throws Error('Name is required') or Error('Category name must be unique') (case-insensitive; the message maps to HTTP 400). */
@@ -584,10 +661,13 @@ export class CategoryRepo {
     if (Number(changes) === 0) throw new Error('Category not found');
   }
 
-  /** Case-insensitive lookup by name; creates the category when missing (used by import/seed). */
-  ensureByName(name: string): Category {
+  /**
+   * Case-insensitive lookup by name; creates the category when missing (used by import/seed), with `color` when
+   * given (an existing category keeps its color).
+   */
+  ensureByName(name: string, color?: string | null): Category {
     const wanted = categoryName(name);
-    return this.db.tx(() => this.findByName(wanted) ?? this.create({ name: wanted }));
+    return this.db.tx(() => this.findByName(wanted) ?? this.create({ name: wanted, color: color ?? undefined }));
   }
 
   private findByName(name: string): Category | undefined {
@@ -905,6 +985,23 @@ export class EmbeddingRepo {
       `INSERT INTO embeddings (model, content_hmac, dim, created_at, payload) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(model, content_hmac) DO UPDATE SET dim = excluded.dim, created_at = excluded.created_at, payload = excluded.payload`,
     ).run(model, contentHmac, vector.length, iso(), this.cipher.encrypt(bytes, embeddingAad(model, contentHmac)));
+  }
+
+  /**
+   * Delete cached vectors of every model whose content_hmac is not in `keep`; with `onlyModel`, also every vector
+   * of other models. Returns count deleted.
+   */
+  pruneExcept(keep: ReadonlySet<string>, onlyModel?: string): number {
+    return this.db.tx(() => {
+      const rows = this.stmt('SELECT model, content_hmac FROM embeddings').all() as { model: string; content_hmac: string }[];
+      const remove = this.stmt('DELETE FROM embeddings WHERE model = ? AND content_hmac = ?');
+      let deleted = 0;
+      for (const { model, content_hmac } of rows) {
+        if (keep.has(content_hmac) && (onlyModel === undefined || model === onlyModel)) continue;
+        deleted += Number(remove.run(model, content_hmac).changes);
+      }
+      return deleted;
+    });
   }
 
   /** Delete cached vectors whose content_hmac is not in `keep` (for the given model). Returns count deleted. */

@@ -93,6 +93,12 @@ const REAL_WORDS: ReadonlySet<string> = new Set(['spots', 'total', 'layer', 'bro
 const ALPHA_RE = /^[a-z]+$/;
 
 const VOCAB: ReadonlySet<string> = new Set(TERMS.map((t) => t.term).filter((t) => t.length >= MIN_VOCAB_TERM && ALPHA_RE.test(t)));
+/**
+ * Longest token that can be one edit away from a vocabulary term (the longest term + one extra letter). Longer
+ * tokens (keyboard mash, words run together) are never corrected, which also keeps the work per token bounded:
+ * findCorrection builds ~2n strings of length n, so an 8000-letter token would otherwise cost ~200 ms.
+ */
+const MAX_TYPO_TOKEN = Math.max(0, ...[...VOCAB].map((t) => t.length)) + 1;
 
 /** One-deletion variants (never deleting the first letter) -> vocabulary term; null marks ambiguous variants. */
 const DELETES: ReadonlyMap<string, string | null> = (() => {
@@ -135,11 +141,13 @@ const MEMO_LIMIT = 20_000;
 const memo = new Map<string, string | null>();
 
 /**
- * Concept term a misspelled lowercase token most likely stands for, or null. Only tokens of >= 5 letters that are
- * not themselves concept terms are corrected, and the first letter is never changed ("spending" stays itself).
+ * Concept term a misspelled lowercase token most likely stands for, or null. Only tokens of >= 5 letters (and at
+ * most one letter longer than the longest term) that are not themselves concept terms are corrected, and the first
+ * letter is never changed ("spending" stays itself).
  */
 export function correctTypo(token: string): string | null {
-  if (token.length < MIN_TYPO_TOKEN || VOCAB.has(token) || REAL_WORDS.has(token) || !ALPHA_RE.test(token)) return null;
+  if (token.length < MIN_TYPO_TOKEN || token.length > MAX_TYPO_TOKEN) return null;
+  if (VOCAB.has(token) || REAL_WORDS.has(token) || !ALPHA_RE.test(token)) return null;
   const cached = memo.get(token);
   if (cached !== undefined) return cached;
   const result = findCorrection(token);

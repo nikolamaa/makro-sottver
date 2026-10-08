@@ -1,33 +1,37 @@
 # MacroPilot – plan razvoja po fazama
 
 Plan je prilagođen tvojim odgovorima: aplikacija je lična i lokalna, nema prijave, radi preko clipboard-a, piše samo na
-engleskom i proverava tačnost na svaka 2 dana. Faza 2 iz originalnog zahteva bila je Intercom integracija, a pošto ona
-nije potrebna, Faza 2 je sada posvećena **brzini na desktopu**. Intercom opcije ostaju opisane kao dodatak.
+engleskom, a proveravaće tačnost na svaka 2 dana (Faza 3, još nije implementirano). Faza 2 iz originalnog zahteva bila
+je Intercom integracija, a pošto ona nije potrebna, Faza 2 je sada posvećena **brzini na desktopu**. Intercom opcije
+ostaju opisane kao dodatak.
 
 ---
 
 ## Faza 1 – MVP (implementirano u ovom repozitorijumu)
 
 **Cilj:** agent nalepi poruku i za manje od sekunde dobije odgovor spreman za kopiranje, potpuno besplatno i lokalno.
+Sve u tabeli je implementirano.
 
 | Oblast | Šta je urađeno |
 |---|---|
 | Biblioteka makroa | Kreiranje, izmena, arhiviranje, vraćanje, trajno brisanje. Kategorije, tagovi, namere, primeri pitanja, interna beleška, kratka šifra, omiljeni |
 | Promenljive | `{{user}}`, `{{user\|there}}` (rezervna vrednost), standardni rečnik od 19 promenljivih, pregled uživo sa označenim praznim mestima |
 | Činjenice | Lista činjenica po makrou (ključ, tvrdnja, vrednost, link, citat, status) i zbirni status makroa sa upozorenjem pri preporuci |
-| Verzije | Svaka izmena je nova verzija, sa prikazom razlika reč po reč i vraćanjem na bilo koju verziju |
-| Uvoz/izvoz | Nalepljen tekst (format za ručno kopiranje iz Intercoma), CSV, JSON. Konverzija Intercom promenljivih, detekcija duplikata. Izvoz u šifrovani backup ili JSON |
+| Verzije | Svaka izmena sadržaja makroa je nova verzija, sa prikazom razlika reč po reč i vraćanjem na bilo koju verziju. Činjenice se ne verzionišu: menjaju se na mestu, a vraćanje verzije ih ne vraća |
+| Uvoz/izvoz | Nalepljen tekst (format za ručno kopiranje iz Intercoma), CSV, JSON, do 30 MB i 20.000 makroa po uvozu. Konverzija Intercom promenljivih, detekcija duplikata po naslovu (i unutar istog uvoza) sa izborom preskoči / nova verzija (zadržava činjenice i metapodatke koje uvoz nema) / kopija. Izvoz u šifrovani backup ili JSON. Vraćanje backup-a zadržava arhivirane, omiljene i boje kategorija |
 | Analiza poruke | Lokalno, < 5 ms: 21 iGaming namera, raspoloženje, hitnost, 19 tipova entiteta, sva pitanja, RG rizik, detekcija ne-engleskog teksta |
-| Preporuka | Hibridna pretraga (BM25 + vektori + namera + upotreba), 1–3 rezultata sa % i razlogom, upozorenje „nema dobrog poklapanja“, pokrivanje više pitanja |
-| Prilagođavanje | Brzo (šablon + entiteti + ton + spajanje do 3 makroa) i AI (Claude Haiku 5.5 / Ollama) uz pseudonimizaciju i guardrail protiv izmišljanja |
+| Preporuka | Hibridna pretraga (BM25 + vektori + namera + upotreba), 1–3 rezultata sa % i razlogom, upozorenje „nema dobrog poklapanja“, pokrivanje više pitanja. Opciona AI provera preporuka u pozadini |
+| Prilagođavanje | Brzo (šablon + entiteti + ton + spajanje do 3 makroa) i AI (Claude Haiku 5.5 / Ollama) uz pseudonimizaciju (entiteti analizatora + PII skener) i guardrail protiv izmišljanja |
 | AI nacrt | Kada nijedan makro ne odgovara: AI nacrt (ili prazan kostur bez AI-ja) i čuvanje kao novi makro |
-| Brzina i ergonomija | `Ctrl+V` bilo gde, `Alt+1..3` izbor, `Ctrl+Enter` kopiranje, `Ctrl+K` fuzzy pretraga, `Ctrl+J` AI dorada, omiljeni i najčešće korišćeni |
-| Bezbednost | AES-256-GCM za sve, ključ u OS keychain-u, ključ za oporavak, `npm run recover`, zaštita lokalnog API-ja, CSP |
+| Brzina i ergonomija | `Ctrl+V` bilo gde na stranici Assist, `Alt+1..3` izbor, `Ctrl+Enter` kopiranje, `Ctrl+K` fuzzy pretraga, `Ctrl+J` AI dorada, omiljeni i najčešće korišćeni. Lista u Library prikazuje samo vidljive redove |
+| Bezbednost | AES-256-GCM za sve, ključ u OS keychain-u, ključ za oporavak (i njegova zamena uz potvrdu), `npm run recover`, pristupni token za lokalni API, „Strogo lokalno“ režim, CSP |
 | Demo podaci | Makroi i činjenice izvučeni iz javnog Stake Help Centra, svaka činjenica sa linkom i doslovnim citatom |
-| Pokretanje | Dvoklik na `MacroPilot.cmd` (Windows) ili `macropilot.sh` / `MacroPilot.command`. Instalacija i build se rade automatski |
+| Pokretanje | Dvoklik na `MacroPilot.cmd` (Windows) ili `macropilot.sh` / `MacroPilot.command`. Instalacija i build se rade automatski, i ponovo posle ažuriranja paketa. Otvara se pristupni link, a ponovno pokretanje otvara postojeću instancu |
 
-**Kriterijumi prihvatanja:** preporuka za manje od 100 ms bez AI-ja · top-1 tačnost ≥ 85% na test skupu poruka · nijedan
-tekst makroa nije čitljiv u fajlu baze · ništa se ne šalje kupcu automatski · sve radi bez interneta i bez API ključa.
+**Kriterijumi prihvatanja:** preporuka za manje od 100 ms na serveru, bez AI-ja (izmereno 2–10 ms; u UI-ju se zbog
+debounce-a od 120 ms preporuke pojave oko 0,2 s posle lepljenja) · top-1 tačnost ≥ 85% na test skupu poruka (izmereno
+92,6% na originalnom skupu, 93,3% i 85,2% na dva slepa holdout skupa, vidi README „Kvalitet preporuka“) · nijedan tekst
+makroa nije čitljiv u fajlu baze · ništa se ne šalje kupcu automatski · sve radi bez interneta i bez API ključa.
 
 ---
 
@@ -58,6 +62,11 @@ bio novi „ulaz“ u isti AssistService.
 ## Faza 3 – Automatska provera tačnosti (na svaka 2 dana)
 
 **Cilj:** makroi nikad ne šalju zastarele informacije, a svaka izmena prolazi kroz tvoje odobrenje.
+
+**Već postoji:** tabele (`sources`, `source_snapshots`, `accuracy_runs`, `fact_checks`, `update_proposals`, `jobs`),
+promptovi „fact check“ i „macro update“ i podešavanja (uključeno, interval 48 h, auto-odobravanje sitnih izmena), koja
+se čuvaju, ali još nemaju efekta (u Settings stoji „Coming in Phase 3“). Planer, preuzimanje izvora i sama provera još
+ne postoje.
 
 1. **Izvori istine** (tabela `sources`):
    - **Stake Help Center** (`help.stake.com/en`): preuzimanje kolekcija i članaka sa javnog sajta, uz ETag/Last-Modified,

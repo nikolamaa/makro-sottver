@@ -2,8 +2,10 @@
  * Typed API client. Usage:
  *   const macros = await api('GET /api/macros');
  *   const m = await api('PUT /api/macros/:id', { params: { id }, body: input });
+ * Every request carries the access token (see access.ts); a rejected token switches the UI to the access screen.
  */
-import { API_CLIENT_HEADER, API_CLIENT_HEADER_VALUE, type ApiReq, type ApiRes, type ApiRouteKey } from '../shared/api';
+import { API_ACCESS_DENIED, API_CLIENT_HEADER, type ApiReq, type ApiRes, type ApiRouteKey } from '../shared/api';
+import { accessToken, markAccessDenied } from './access';
 
 export class ApiClientError extends Error {
   constructor(
@@ -13,6 +15,19 @@ export class ApiClientError extends Error {
     super(message);
     this.name = 'ApiClientError';
   }
+}
+
+function authHeaders(): Record<string, string> {
+  const token = accessToken();
+  return token ? { [API_CLIENT_HEADER]: token } : {};
+}
+
+function errorText(data: unknown, fallback: string): string {
+  return data && typeof data === 'object' && 'error' in data ? String((data as { error: unknown }).error) : fallback;
+}
+
+function checkAccess(status: number, message: string): void {
+  if (status === 403 && message === API_ACCESS_DENIED) markAccessDenied();
 }
 
 export interface ApiOptions<K extends ApiRouteKey> {
@@ -35,7 +50,7 @@ export async function api<K extends ApiRouteKey>(key: K, opts: ApiOptions<K> = {
     const s = qs.toString();
     if (s) path += `?${s}`;
   }
-  const headers: Record<string, string> = { [API_CLIENT_HEADER]: API_CLIENT_HEADER_VALUE };
+  const headers = authHeaders();
   let body: string | undefined;
   if (opts.body !== undefined) {
     headers['content-type'] = 'application/json';
@@ -45,7 +60,8 @@ export async function api<K extends ApiRouteKey>(key: K, opts: ApiOptions<K> = {
   const text = await res.text();
   const data: unknown = text ? JSON.parse(text) : undefined;
   if (!res.ok) {
-    const msg = data && typeof data === 'object' && 'error' in data ? String((data as { error: unknown }).error) : res.statusText;
+    const msg = errorText(data, res.statusText);
+    checkAccess(res.status, msg);
     throw new ApiClientError(msg, res.status);
   }
   return data as ApiRes<K>;
@@ -53,8 +69,19 @@ export async function api<K extends ApiRouteKey>(key: K, opts: ApiOptions<K> = {
 
 /** Download helper for GET endpoints that return files (export). */
 export async function downloadFile(path: string, fallbackName: string): Promise<void> {
-  const res = await fetch(path, { headers: { [API_CLIENT_HEADER]: API_CLIENT_HEADER_VALUE } });
-  if (!res.ok) throw new ApiClientError(await res.text(), res.status);
+  const res = await fetch(path, { headers: authHeaders() });
+  if (!res.ok) {
+    const text = await res.text();
+    let data: unknown;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = undefined;
+    }
+    const msg = errorText(data, text || res.statusText);
+    checkAccess(res.status, msg);
+    throw new ApiClientError(msg, res.status);
+  }
   const blob = await res.blob();
   const cd = res.headers.get('content-disposition') ?? '';
   const name = /filename="?([^"]+)"?/.exec(cd)?.[1] ?? fallbackName;

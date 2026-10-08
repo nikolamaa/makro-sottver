@@ -1,10 +1,8 @@
 /**
  * `npm run recover` - restore access to an existing encrypted library after the master key was lost
  * (e.g. new Windows profile, cleared keychain). Asks for the recovery key, unwraps the master key stored in the
- * database, verifies it, and saves it to the OS keychain (or key file) again.
+ * database, verifies it, and saves it to the OS keychain (or key file) again. The key is typed without echo.
  */
-import { createInterface } from 'node:readline/promises';
-import { stdin, stdout } from 'node:process';
 import { existsSync } from 'node:fs';
 import { createCipher } from './crypto/cipher.js';
 import { storeMasterKey } from './crypto/keystore.js';
@@ -13,6 +11,7 @@ import { openDatabase } from './db/database.js';
 import { MetaRepo } from './db/repos.js';
 import { verifyKeyCheck } from './services/security.js';
 import { loadConfig } from './config.js';
+import { PromptCancelledError, promptSecret } from './promptSecret.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -27,9 +26,13 @@ async function main(): Promise<void> {
     console.error('This database has no recovery key information.');
     process.exit(1);
   }
-  const rl = createInterface({ input: stdin, output: stdout });
-  const answer = await rl.question('Recovery key (MPRK-....): ');
-  rl.close();
+  let answer: string;
+  try {
+    answer = await promptSecret('Recovery key (MPRK-...., input is hidden): ');
+  } catch (err) {
+    if (err instanceof PromptCancelledError) process.exit(130);
+    throw err;
+  }
   let key: Buffer;
   try {
     key = unwrapMasterKey(JSON.parse(wrappedRaw) as WrappedKey, answer);

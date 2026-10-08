@@ -138,7 +138,7 @@ export function AiSection({
           />
           <Toggle
             label="AI double-check of recommendations"
-            hint="After the instant local match, AI re-scores the top candidates and explains the best fit (about $0.0002 per message with Claude Haiku)."
+            hint="After the instant local match, AI re-scores the top candidates and explains the best fit (about $0.0002-0.0003 per message with Claude Haiku)."
             checked={ai.rerank}
             onChange={(rerank) => update({ ai: { rerank } })}
           />

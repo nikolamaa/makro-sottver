@@ -3,7 +3,8 @@
  * folder (or a synced/backed-up copy of it leaking) never exposes the key.
  *
  * Environment overrides:
- *   MACROPILOT_PORT             default 4317 (the next free port up to +10 is used if busy)
+ *   MACROPILOT_PORT             default 4317 (the next free port up to +10 is used if busy; a second launch on the
+ *                               same data folder opens the running instance instead, see instanceLock.ts)
  *   MACROPILOT_DATA_DIR         encrypted database location
  *   MACROPILOT_KEY_DIR          fallback key-file location (used only when no OS keychain is available)
  *   MACROPILOT_MASTER_KEY       base64 32-byte key (tests/CI only)
@@ -36,6 +37,14 @@ export interface AppConfig {
 
 const here = dirname(fileURLToPath(import.meta.url));
 
+/**
+ * Dev mode = this module runs from its TypeScript source (tsx / vitest). The built app runs compiled .js, whatever
+ * folder it is installed in (a path like C:\src\server-tools\MacroPilot must not switch it to dev mode).
+ */
+export function isSourceModuleUrl(moduleUrl: string): boolean {
+  return new URL(moduleUrl).pathname.endsWith('.ts');
+}
+
 /** Repository root: works from src/server (tsx) and dist/node/server (compiled). */
 function findRoot(): string {
   let dir = here;
@@ -64,7 +73,7 @@ function defaultDirs(env: NodeJS.ProcessEnv): { dataDir: string; keyDir: string 
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const root = findRoot();
-  const isDev = here.includes(`${join('src', 'server')}`);
+  const isDev = isSourceModuleUrl(import.meta.url);
   let version = '0.0.0';
   try {
     version = (JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { version?: string }).version ?? version;

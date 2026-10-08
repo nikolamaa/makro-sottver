@@ -12,15 +12,21 @@ import { useHotkeys } from '../hotkeys';
 import { actions } from '../store';
 import { Badge, Button, EmptyState, Kbd, Modal, Spinner, toast } from '../ui';
 import { errorMessage } from '../components/settings/settingsUtils';
-import { addCommitResults, chunkForCommit, decodeFileBytes, formatFromFileName, guessFormat } from '../components/settings/importUtils';
+import {
+  addCommitResults,
+  chunkForCommit,
+  COMMIT_BATCH_BYTES,
+  COMMIT_BATCH_ITEMS,
+  decodeFileBytes,
+  exceedsImportLimit,
+  formatFromFileName,
+  guessFormat,
+  IMPORT_MAX_CONTENT_BYTES,
+} from '../components/settings/importUtils';
 import './import.css';
 
-/** Server limit for one import request. */
-const MAX_CONTENT_CHARS = 2_000_000;
+const MAX_CONTENT_MB = IMPORT_MAX_CONTENT_BYTES / (1024 * 1024);
 const MAX_ERRORS_SHOWN = 50;
-/** The server caps request bodies at 3 MB; large imports are committed in batches well below that. */
-const COMMIT_BATCH_BYTES = 1_000_000;
-const COMMIT_BATCH_ITEMS = 500;
 
 type OnDuplicate = ImportCommitRequest['onDuplicate'];
 
@@ -73,7 +79,11 @@ const PLACEHOLDERS: Record<ImportFormat, string> = {
 
 const ON_DUPLICATE: { value: OnDuplicate; label: string; hint: string }[] = [
   { value: 'skip', label: 'Skip', hint: 'Keep the existing macro unchanged.' },
-  { value: 'new_version', label: 'Save as new version', hint: 'Replace the content; the old text stays in version history.' },
+  {
+    value: 'new_version',
+    label: 'Save as new version',
+    hint: 'Replace the text; the old text stays in version history. Facts, category, tags and triggers the import leaves empty are kept.',
+  },
   { value: 'create_copy', label: 'Create a copy', hint: 'Import as a separate macro with the same title.' },
 ];
 
@@ -135,8 +145,8 @@ export function ImportPage() {
       textareaRef.current?.focus();
       return;
     }
-    if (text.length > MAX_CONTENT_CHARS) {
-      toast(`Too much text at once (max ${(MAX_CONTENT_CHARS / 1_000_000).toFixed(0)} million characters). Split it into smaller parts.`, 'danger', 5000);
+    if (exceedsImportLimit(text)) {
+      toast(`Too much text at once (max ${MAX_CONTENT_MB} MB). Split it into smaller parts.`, 'danger', 5000);
       return;
     }
     previewAbort.current?.abort();
@@ -173,7 +183,8 @@ export function ImportPage() {
         toast('Unsupported file type. Use .csv, .tsv, .json, .txt or .md', 'danger');
         return;
       }
-      if (file.size > MAX_CONTENT_CHARS * 4) {
+      // Even as UTF-16 (2 bytes per character) a larger file decodes to more than the limit.
+      if (file.size > IMPORT_MAX_CONTENT_BYTES * 2) {
         toast('This file is too large to import at once. Split it into smaller files.', 'danger');
         return;
       }
@@ -223,6 +234,7 @@ export function ImportPage() {
 
   const selectedCount = useMemo(() => (preview ? preview.included.filter(Boolean).length : 0), [preview]);
   const duplicateCount = useMemo(() => (preview ? preview.items.filter((it) => it.duplicateOf).length : 0), [preview]);
+  const archivedCount = useMemo(() => (preview ? preview.items.filter((it) => it.archived).length : 0), [preview]);
   const selectedDuplicates = useMemo(
     () => (preview ? preview.items.filter((it, i) => it.duplicateOf && preview.included[i]).length : 0),
     [preview],
@@ -465,6 +477,7 @@ export function ImportPage() {
             <div className="imp-summary">
               <Badge tone="info">{plural(preview.items.length, 'macro')} found</Badge>
               {duplicateCount ? <Badge tone="warning">{plural(duplicateCount, 'duplicate')}</Badge> : null}
+              {archivedCount ? <Badge>{archivedCount} archived</Badge> : null}
               {preview.errors.length ? <Badge tone="danger">{plural(preview.errors.length, 'problem')}</Badge> : null}
               <span className="spacer" />
               {preview.items.length ? (
@@ -679,6 +692,11 @@ const PreviewRow = memo(function PreviewRow({
         <details onToggle={(e) => setOpen(e.currentTarget.open)}>
           <summary>
             <span className="imp-title">{item.title}</span>
+            {item.isFavorite ? (
+              <span className="muted" role="img" title="Favorite" aria-label="Favorite">
+                ★
+              </span>
+            ) : null}
             {item.shortcut ? <span className="imp-shortcut mono">/{item.shortcut}</span> : null}
           </summary>
           {open ? (
@@ -718,7 +736,9 @@ const PreviewRow = memo(function PreviewRow({
       </td>
       <td className="imp-col-num">{item.facts.length || <span className="muted">0</span>}</td>
       <td>
-        {item.duplicateOf ? (
+        {item.archived ? (
+          <Badge title="Restored to the archive, not to the active library">Archived</Badge>
+        ) : item.duplicateOf ? (
           <Badge tone="warning" title="A macro with the same title already exists">
             Duplicate
           </Badge>

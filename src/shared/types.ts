@@ -532,6 +532,12 @@ export interface ImportItem {
   facts: FactInput[];
   /** True when a macro with the same normalized title already exists. */
   duplicateOf: Id | null;
+  /** MacroPilot export/backup only: the macro was archived. It is restored as archived and never matched as a duplicate. */
+  archived?: boolean;
+  /** MacroPilot export/backup only: the macro was a favorite. */
+  isFavorite?: boolean;
+  /** Color of `category` from the file's categories list (hex), used when the category has to be created. */
+  categoryColor?: string | null;
 }
 
 export interface ImportPreview {

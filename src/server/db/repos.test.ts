@@ -378,6 +378,70 @@ describe('MacroRepo', () => {
     expect(all[5]?.facts.map((f) => f.key)).toEqual(['k5.1', 'k5.2', 'k5.3']);
     expect(elapsed).toBeLessThan(1000);
   });
+
+  describe('corrupted rows', () => {
+    /** Flips one bit in the middle of a stored ciphertext, like a bad sector would. */
+    function corrupt(table: 'macro_versions' | 'facts', where: string, ...params: string[]): void {
+      const row = db.raw.prepare(`SELECT rowid AS rid, payload FROM ${table} WHERE ${where}`).get(...params) as { rid: number; payload: Uint8Array };
+      const bytes = Buffer.from(row.payload);
+      bytes[20] = (bytes[20] ?? 0) ^ 0x01;
+      db.raw.prepare(`UPDATE ${table} SET payload = ? WHERE rowid = ?`).run(bytes, row.rid);
+    }
+
+    it('skips a macro whose current version cannot be decrypted and keeps reading the rest', () => {
+      const bad = repo.create(macroInput({ title: 'Bad' }), 'create');
+      const good = repo.create(macroInput({ title: 'Good', facts: [fact()] }), 'create');
+      corrupt('macro_versions', 'macro_id = ?', bad.id);
+      expect(repo.listAll().map((m) => m.id)).toEqual([good.id]);
+      expect(repo.listAll({ includeArchived: true }).map((m) => m.id)).toEqual([good.id]);
+      expect(repo.get(bad.id)).toBeNull();
+      expect(repo.get(good.id)?.facts).toHaveLength(1);
+      expect(repo.unreadableIds()).toEqual([bad.id]);
+      // A fresh repo (app restart) finds the same.
+      const restarted = new MacroRepo(db, cipher);
+      expect(restarted.listAll()).toHaveLength(1);
+      expect(restarted.unreadableIds()).toEqual([bad.id]);
+    });
+
+    it('drops an undecryptable fact but keeps its macro and the other facts', () => {
+      const m = repo.create(macroInput({ facts: [fact({ key: 'a' }), fact({ key: 'b' })] }), 'create');
+      const [first] = m.facts;
+      corrupt('facts', 'id = ?', first?.id ?? '');
+      expect(repo.listAll()[0]?.facts.map((f) => f.key)).toEqual(['b']);
+      expect(repo.get(m.id)?.facts.map((f) => f.key)).toEqual(['b']);
+      expect(repo.unreadableIds()).toEqual([m.id]);
+      // Saving the facts again replaces the unreadable row and clears the report.
+      repo.replaceFacts(m.id, repo.get(m.id)?.facts ?? []);
+      expect(repo.get(m.id)?.facts.map((f) => f.key)).toEqual(['b']);
+      expect(repo.unreadableIds()).toEqual([]);
+    });
+
+    it('is repaired by saving new content and leaves unreadable old versions out of the history', () => {
+      const m = repo.create(macroInput({ title: 'Repair me' }), 'create');
+      corrupt('macro_versions', 'macro_id = ? AND version = 1', m.id);
+      expect(repo.get(m.id)).toBeNull();
+      const repaired = repo.update(m.id, macroInput({ title: 'Repair me', body: 'Fresh body' }), 'manual');
+      expect(repaired.version).toBe(2);
+      expect(repo.unreadableIds()).toEqual([]);
+      expect(repo.listVersions(m.id).map((v) => v.version)).toEqual([2]);
+    });
+
+    it('forgets a hard-deleted unreadable macro', () => {
+      const m = repo.create(macroInput(), 'create');
+      corrupt('macro_versions', 'macro_id = ?', m.id);
+      repo.listAll();
+      expect(repo.unreadableIds()).toEqual([m.id]);
+      repo.hardDelete(m.id);
+      expect(repo.unreadableIds()).toEqual([]);
+    });
+  });
+
+  it('currentContentKeys returns the current content HMAC of every macro, archived included', () => {
+    const a = repo.create(macroInput({ title: 'A' }), 'create');
+    const b = repo.update(repo.create(macroInput({ title: 'B' }), 'create').id, macroInput({ title: 'B', body: 'v2' }), 'manual');
+    repo.archive(a.id);
+    expect(repo.currentContentKeys().sort()).toEqual([repo.contentKey(a.id), repo.contentKey(b.id)].sort());
+  });
 });
 
 describe('CategoryRepo', () => {
@@ -420,6 +484,21 @@ describe('CategoryRepo', () => {
     expect(created.name).toBe('Casino');
     expect(repo.ensureByName('CASINO').id).toBe(created.id);
     expect(repo.list()).toHaveLength(2);
+  });
+
+  it('ensureByName creates a missing category with the given color and keeps an existing color', () => {
+    const existing = repo.create({ name: 'VIP', color: '#dc2626' });
+    expect(repo.ensureByName('vip', '#000000')).toEqual(existing);
+    expect(repo.ensureByName('Casino', '#7c3aed')).toMatchObject({ name: 'Casino', color: '#7c3aed' });
+    expect(repo.ensureByName('Sports', null).color).toBe('#4f7cff');
+  });
+
+  it('skips a category that cannot be decrypted', () => {
+    const bad = repo.create({ name: 'Bad' });
+    repo.create({ name: 'Good' });
+    db.raw.prepare('UPDATE categories SET payload = (SELECT payload FROM categories WHERE id <> ?) WHERE id = ?').run(bad.id, bad.id);
+    expect(repo.list().map((c) => c.name)).toEqual(['Good']);
+    expect(repo.unreadableIds()).toEqual([bad.id]);
   });
 });
 
@@ -618,6 +697,19 @@ describe('EmbeddingRepo', () => {
     expect(repo.get('m2', 'a')).not.toBeNull();
     expect(repo.prune('m1', new Set(['b']))).toBe(0);
   });
+
+  it('pruneExcept drops vectors of content not in the keep set for every model, optionally other models too', () => {
+    const repo = new EmbeddingRepo(db, cipher);
+    for (const model of ['m1', 'm2']) for (const h of ['a', 'b']) repo.set(model, h, new Float32Array([1]));
+    expect(repo.pruneExcept(new Set(['a']))).toBe(2);
+    expect(repo.get('m1', 'a')).not.toBeNull();
+    expect(repo.get('m2', 'a')).not.toBeNull();
+    expect(repo.get('m1', 'b')).toBeNull();
+    expect(repo.get('m2', 'b')).toBeNull();
+    expect(repo.pruneExcept(new Set(['a']), 'm2')).toBe(1);
+    expect(repo.get('m1', 'a')).toBeNull();
+    expect(repo.get('m2', 'a')).not.toBeNull();
+  });
 });
 
 describe('encryption at rest', () => {
@@ -718,8 +810,15 @@ describe('encryption at rest', () => {
     const { macroId, contentKey } = populate(db, cipher);
     const other = new MacroRepo(db, cipher).create(macroInput({ title: 'Other', facts: [fact()] }), 'create');
     const wrongKey = createCipher(randomBytes(32));
-    expect(() => new MacroRepo(db, wrongKey).listAll()).toThrow(DecryptionError);
-    expect(() => new CategoryRepo(db, wrongKey).list()).toThrow(DecryptionError);
+    // Macro and category rows that cannot be decrypted are skipped and reported (never shown or fatal); a wrong
+    // key as a whole is caught earlier by verifyKeyCheck.
+    const wrongMacros = new MacroRepo(db, wrongKey);
+    expect(wrongMacros.listAll()).toEqual([]);
+    expect(wrongMacros.unreadableIds().sort()).toEqual([macroId, other.id].sort());
+    expect(wrongMacros.get(macroId)).toBeNull();
+    const wrongCategories = new CategoryRepo(db, wrongKey);
+    expect(wrongCategories.list()).toEqual([]);
+    expect(wrongCategories.unreadableIds()).toHaveLength(1);
     expect(() => new SettingsRepo(db, wrongKey).get()).toThrow(DecryptionError);
     expect(() => new SettingsRepo(db, wrongKey).getSecret('anthropic_api_key')).toThrow(DecryptionError);
     expect(() => new EventRepo(db, wrongKey).list()).toThrow(DecryptionError);
@@ -727,15 +826,19 @@ describe('encryption at rest', () => {
 
     // A fact payload moved to another fact row must not decrypt either.
     db.raw.prepare('UPDATE facts SET payload = (SELECT payload FROM facts WHERE macro_id = ?) WHERE macro_id = ?').run(other.id, macroId);
-    expect(() => new MacroRepo(db, cipher).listAll()).toThrow(DecryptionError);
+    const afterFactSwap = new MacroRepo(db, cipher);
+    expect(afterFactSwap.listAll().find((m) => m.id === macroId)?.facts).toEqual([]);
+    expect(afterFactSwap.unreadableIds()).toEqual([macroId]);
     db.raw.prepare('DELETE FROM facts WHERE macro_id = ?').run(macroId);
 
     // Copy the other macro's version payload into this macro's row: AAD binding must reject it.
     db.raw
       .prepare('UPDATE macro_versions SET payload = (SELECT payload FROM macro_versions WHERE macro_id = ?) WHERE macro_id = ?')
       .run(other.id, macroId);
-    expect(() => new MacroRepo(db, cipher).get(macroId)).toThrow(DecryptionError);
-    expect(new MacroRepo(db, cipher).get(other.id)?.title).toBe('Other');
+    const afterVersionSwap = new MacroRepo(db, cipher);
+    expect(afterVersionSwap.get(macroId)).toBeNull();
+    expect(afterVersionSwap.unreadableIds()).toEqual([macroId]);
+    expect(afterVersionSwap.get(other.id)?.title).toBe('Other');
 
     // Swap the secret into the app settings slot.
     db.raw

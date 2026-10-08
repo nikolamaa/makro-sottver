@@ -8,7 +8,7 @@ import { AiService, type AiServiceDeps } from './ai/aiService.js';
 import { buildApp } from './api/app.js';
 import type { AppConfig } from './config.js';
 import { createCipher } from './crypto/cipher.js';
-import { loadOrCreateMasterKey, type KeyStorage } from './crypto/keystore.js';
+import { loadOrCreateMasterKey, type KeyStorage, type MasterKeyResult } from './crypto/keystore.js';
 import { openDatabase, type Db } from './db/database.js';
 import { CategoryRepo, EmbeddingRepo, EventRepo, LlmUsageRepo, MacroRepo, MetaRepo, SettingsRepo } from './db/repos.js';
 import { parseImport } from './importexport/importer.js';
@@ -16,7 +16,7 @@ import { createBuiltinEmbedder, resolveEmbedder, type Embedder } from './search/
 import { MacroIndex } from './search/macroIndex.js';
 import { AssistService } from './services/assist.js';
 import { LibraryService } from './services/library.js';
-import { SecurityService, verifyKeyCheck } from './services/security.js';
+import { deriveAccessToken, SecurityService, verifyKeyCheck } from './services/security.js';
 
 export class KeyMismatchError extends Error {
   constructor(readonly dbFile: string) {
@@ -32,6 +32,8 @@ export interface Runtime {
   app: FastifyInstance;
   db: Db;
   keyStorage: KeyStorage;
+  /** Value of the X-MacroPilot header every /api request must carry (see deriveAccessToken). */
+  accessToken: string;
   library: LibraryService;
   /** Resolves when the preferred embedder finished loading (or fell back). */
   embedderReady: Promise<void>;
@@ -40,19 +42,22 @@ export interface Runtime {
 
 export type Logger = (msg: string) => void;
 
-/** Test seams (never set in production). */
 export interface RuntimeOptions {
-  /** Replaces the real Claude/Ollama providers (see AiServiceDeps.providerFactory). */
+  /** Master key already loaded with loadMasterKey() (index.ts needs it earlier for the single-instance check). */
+  masterKey?: MasterKeyResult;
+  /** Test seam (never set in production): replaces the real Claude/Ollama providers (see AiServiceDeps.providerFactory). */
   aiProviderFactory?: AiServiceDeps['providerFactory'];
 }
 
+/** Load the master key (OS keychain / key file / env), creating it on first run. */
+export function loadMasterKey(config: AppConfig): Promise<MasterKeyResult> {
+  return loadOrCreateMasterKey({ keyDir: config.keyDir, envKey: config.envMasterKey, disableKeychain: config.disableKeychain });
+}
+
 export async function createRuntime(config: AppConfig, log: Logger = () => {}, options: RuntimeOptions = {}): Promise<Runtime> {
-  const { key, storage, created } = await loadOrCreateMasterKey({
-    keyDir: config.keyDir,
-    envKey: config.envMasterKey,
-    disableKeychain: config.disableKeychain,
-  });
+  const { key, storage, created } = options.masterKey ?? (await loadMasterKey(config));
   if (created) log(`Created a new encryption key (stored in ${storage}).`);
+  const accessToken = deriveAccessToken(key);
 
   const db = openDatabase(config.dbFile);
   const cipher = createCipher(key);
@@ -96,6 +101,15 @@ export async function createRuntime(config: AppConfig, log: Logger = () => {}, o
 
   // Upgrade to the preferred embedder in the background (e.g. local neural model), then re-index.
   let embedderGeneration = 0;
+  /** The embedder last handed to the index (it may still be re-embedding with it). */
+  let target: Embedder = index.embedder;
+  /**
+   * Builtin embedder whose status explains why the preferred provider is not in use (shown in the UI), while the
+   * index keeps the equivalent builtin embedder it already has: builtin vectors are deterministic and not cached,
+   * so swapping would re-embed the whole library for nothing. Only applies while `base` is the index's embedder.
+   */
+  let statusOverride: { base: Embedder; embedder: Embedder } | null = null;
+  const sameBuiltin = (a: Embedder, b: Embedder) => a.provider === 'builtin' && b.provider === 'builtin' && a.model === b.model && a.dim === b.dim;
   const loadPreferredEmbedder = async (): Promise<void> => {
     const generation = ++embedderGeneration;
     const s = settingsRepo.get();
@@ -105,10 +119,23 @@ export async function createRuntime(config: AppConfig, log: Logger = () => {}, o
       log,
     });
     if (generation !== embedderGeneration) return;
-    // Always swap, even to an identical builtin embedder: its status carries the fallback reason shown in the UI.
-    // Re-indexing is cheap because vectors are cached per (model, content).
-    await index.setEmbedder(preferred);
+    if (sameBuiltin(target, preferred)) {
+      statusOverride = { base: target, embedder: preferred };
+    } else {
+      statusOverride = null;
+      target = preferred;
+      try {
+        await index.setEmbedder(preferred);
+      } catch (err) {
+        target = index.embedder;
+        throw err;
+      }
+    }
     log(`Search embeddings: ${preferred.provider} (${preferred.model}).`);
+  };
+  const currentEmbedder = (): Embedder => {
+    const current = index.embedder;
+    return statusOverride && statusOverride.base === current ? statusOverride.embedder : current;
   };
   const embedderReady = loadPreferredEmbedder().catch((err: unknown) => log(`Embedder upgrade failed: ${String(err)}`));
 
@@ -118,6 +145,7 @@ export async function createRuntime(config: AppConfig, log: Logger = () => {}, o
     isDev: config.isDev,
     webDir: config.webDir,
     masterKey: key,
+    accessToken,
     library,
     assist,
     ai,
@@ -125,7 +153,7 @@ export async function createRuntime(config: AppConfig, log: Logger = () => {}, o
     events: eventRepo,
     llmUsage: llmUsageRepo,
     security,
-    embedder: () => index.embedder,
+    embedder: currentEmbedder,
     onEmbeddingSettingsChanged: () => {
       void loadPreferredEmbedder().catch((err: unknown) => log(`Embedder reload failed: ${String(err)}`));
     },
@@ -138,6 +166,7 @@ export async function createRuntime(config: AppConfig, log: Logger = () => {}, o
     app,
     db,
     keyStorage: storage,
+    accessToken,
     library,
     embedderReady,
     async close() {

@@ -4,6 +4,9 @@ Baza je jedan SQLite fajl (`macropilot.db`) u folderu sa podacima. Koristi se No
 režimom i stranim ključevima. Izvorna definicija je u [`src/server/db/schema.ts`](../src/server/db/schema.ts), a migracije se
 primenjuju automatski pri pokretanju.
 
+Dijagram prikazuje sve tabele i kolone iz `schema.ts` (migracija v1), uključujući dozvoljene vrednosti iz `CHECK`
+ograničenja. Tabele u donjem delu (`settings` … `jobs`) nemaju strane ključeve.
+
 **Pravilo šifrovanja:** svaka kolona `payload` sadrži AES-256-GCM blob:
 `[verzija 1B][nonce 12B][šifrovani tekst][tag 16B]`. Nešifrovano su samo ID-jevi, vremena, brojači i enumi. AAD
 (dodatni autentifikovani podaci) vezuje blob za njegov red, pa se šifrovana vrednost ne može premestiti u drugi red.
@@ -57,32 +60,34 @@ erDiagram
         TEXT id PK
         TEXT type "intercom_help_center|web_page|google_doc|google_sheet|confluence_page|slack_canvas|manual"
         INTEGER enabled
+        TEXT created_at
         TEXT last_fetched_at
         TEXT last_status
-        BLOB payload "šifrovano: naziv, URL, konfiguracija"
+        BLOB payload "šifrovano: naziv, URL, konfiguracija, referenca kredencijala"
     }
     source_snapshots {
         TEXT id PK
         TEXT source_id FK
         TEXT fetched_at
         TEXT content_hmac
-        BLOB payload "šifrovano: pasusi + otisci"
+        BLOB payload "šifrovano: naslov, URL, pasusi + otisci"
     }
     accuracy_runs {
         TEXT id PK
         TEXT trigger "schedule|manual|startup"
         TEXT started_at
         TEXT finished_at
-        TEXT status
+        TEXT status "running|succeeded|failed|partial"
         TEXT stats "samo brojke"
     }
     fact_checks {
         TEXT id PK
         TEXT run_id FK
         TEXT fact_id FK
-        TEXT verdict
+        TEXT verdict "verified|outdated|contradicted|unverifiable"
         TEXT method "unchanged_source|deterministic|llm|manual"
-        BLOB payload "šifrovano: dokaz, predlog"
+        TEXT checked_at
+        BLOB payload "šifrovano: citat dokaza, URL, predlog vrednosti, obrazloženje"
     }
     update_proposals {
         TEXT id PK
@@ -91,7 +96,48 @@ erDiagram
         INTEGER base_version
         TEXT status "pending|approved|rejected|auto_approved|superseded"
         TEXT severity "minor|major"
-        BLOB payload "šifrovano: novi sadržaj, diff, razlozi, linkovi"
+        TEXT created_at
+        TEXT decided_at
+        BLOB payload "šifrovano: novi sadržaj, diff, razlozi, linkovi, izmene činjenica"
+    }
+    settings {
+        TEXT key PK "app ili secret:naziv"
+        BLOB payload "šifrovano: JSON"
+    }
+    meta {
+        TEXT key PK
+        TEXT value
+    }
+    embeddings {
+        TEXT model PK
+        TEXT content_hmac PK
+        INTEGER dim
+        TEXT created_at
+        BLOB payload "šifrovano: bajtovi vektora"
+    }
+    events {
+        TEXT uid PK
+        TEXT ts
+        TEXT type
+        BLOB payload "šifrovano: događaj bez teksta poruke"
+    }
+    llm_usage {
+        INTEGER id PK
+        TEXT ts
+        TEXT month "YYYY-MM"
+        TEXT provider
+        TEXT model
+        TEXT purpose
+        INTEGER input_tokens
+        INTEGER output_tokens
+        REAL cost_usd
+    }
+    jobs {
+        TEXT name PK "npr. accuracy_check"
+        REAL interval_hours
+        INTEGER enabled
+        TEXT next_run_at
+        TEXT last_run_at
     }
 ```
 
@@ -102,16 +148,19 @@ erDiagram
 | Tabela | Svrha | Šifrovano (`payload`) |
 |---|---|---|
 | `macros` | Jedan red po makrou: trenutna verzija, omiljen, broj i vreme korišćenja, zbirni status provere, arhiviran | – (samo metapodaci) |
-| `macro_versions` | Kompletna istorija sadržaja. Svaka izmena je nova verzija. Revert pravi novu verziju sa starim sadržajem | `{content: {title, body, categoryId, tags, intents, triggers, notes, shortcut}, changeNote}` |
+| `macro_versions` | Istorija sadržaja. Svaka izmena sadržaja (naslov, tekst, kategorija, tagovi, namere, primeri, beleška, šifra) je nova verzija, a ista vrednost ne pravi verziju. Revert pravi novu verziju sa starim sadržajem. **Činjenice nisu deo verzije:** menjaju se na mestu u `facts`, a revert ih ne vraća | `{content: {title, body, categoryId, tags, intents, triggers, notes, shortcut}, changeNote}` |
 | `facts` | Atomske činjenice makroa i njihov status | `{key, statement, value, sourceUrl, evidenceQuote}` |
 | `categories` | Kategorije makroa | `{name, color}` |
-| `settings` | Podešavanja (`app`) i tajne (`secret:anthropic_api_key`, privremeno `secret:pending_recovery_key`) | ceo JSON |
-| `meta` | Verzija šeme, `key_check` (šifrovani kanarinac za proveru ključa), `recovery_wrapped` (glavni ključ šifrovan ključem za oporavak), `recovery_ack`, `seeded` | `key_check` je šifrovan. `recovery_wrapped` je šifrovan ključem za oporavak (scrypt + AES-GCM) |
-| `embeddings` | Keš vektora po `(model, content_hmac)`, da se pri startu ništa ne računa ponovo | bajtovi vektora |
+| `settings` | Podešavanja (`app`) i tajne (`secret:anthropic_api_key`, privremeno `secret:pending_recovery_key`: ključ za oporavak sa prvog pokretanja ili novi ključ iz Settings → Security, dok ga ne potvrdiš) | ceo JSON |
+| `meta` | Verzija šeme, `key_check` (šifrovani kanarinac za proveru ključa), `recovery_wrapped` (glavni ključ šifrovan ključem za oporavak), `recovery_ack` (`0` dok ključ čeka potvrdu), `seeded` | `key_check` je šifrovan. `recovery_wrapped` je šifrovan ključem za oporavak (scrypt + AES-GCM) |
+| `embeddings` | Keš vektora po `(model, content_hmac)`, da se pri startu ništa ne računa ponovo. Vektori sadržaja koji više nijedan makro nema (trajno obrisani makroi, zamenjene verzije) brišu se pri startu, ponovnom indeksiranju i trajnom brisanju makroa. Arhivirani makroi zadržavaju svoje | bajtovi vektora |
 | `events` | Anonimna analitika: prikazano, izabrano, kopirano, bez poklapanja. **Nikad tekst poruke** | `{type, macroIds, rank, confidence, intents, editRatio, mode}` |
 | `llm_usage` | Potrošnja tokena i trošak po mesecu (za limit budžeta) | – (samo brojke) |
 
 ### Provera tačnosti (Faza 3, tabele postoje od početka da se šema ne menja)
+
+Kod ih za sada ne koristi: planer, provera i predlozi izmena dolaze u Fazi 3. Podešavanja provere (uključeno, interval
+48 h) se čuvaju u `settings`, ali još nemaju efekta.
 
 | Tabela | Svrha |
 |---|---|
@@ -120,7 +169,7 @@ erDiagram
 | `accuracy_runs` | Svako pokretanje provere: zakazano, ručno ili nadoknada pri startu |
 | `fact_checks` | Rezultat po činjenici: presuda, metod (nepromenjen izvor, deterministički, LLM, ručno) i dokaz |
 | `update_proposals` | Predlozi izmena makroa (staro/novo, razlozi, linkovi) koji čekaju odobrenje |
-| `jobs` | Raspored: `accuracy_check` sa intervalom od 48 h, `next_run_at`, `last_run_at` |
+| `jobs` | Raspored: `accuracy_check` sa intervalom od 48 h, `next_run_at`, `last_run_at` (tabela je za sada prazna) |
 
 ## AAD konvencije
 
@@ -141,4 +190,19 @@ erDiagram
 - `events` se brišu posle `privacy.analyticsRetentionDays` (podrazumevano 90), pri startu i na svakih 6 sati.
 - Verzije makroa se čuvaju trajno, jer su istorija izmena. Trajno brisanje makroa briše i njegove verzije i činjenice
   (`ON DELETE CASCADE`).
-- Šifrovani backup (`.mpbackup`) sadrži izvoz biblioteke i glavni ključ zaštićen ključem za oporavak.
+- Šifrovani backup (`.mpbackup`) sadrži izvoz biblioteke (trenutni sadržaj svih makroa, i arhiviranih, sa
+  činjenicama, omiljenima i kategorijama sa bojama), šifrovan glavnim ključem, i glavni ključ zaštićen ključem za
+  oporavak. Istorija verzija, brojači korišćenja, podešavanja i API ključ nisu u njemu.
+
+## Ostali fajlovi u folderu sa podacima
+
+- `macropilot.db` (+ `-wal` / `-shm` fajlovi SQLite WAL režima).
+- `macropilot.lock`: postoji dok server radi. Sadrži PID, port i vreme pokretanja (nikad token), a služi da drugo
+  pokretanje otvori postojeću instancu umesto da pokrene drugi server nad istom bazom.
+- `models/`: keš lokalnog neuralnog modela za pretragu, ako se koristi.
+
+## Oštećeni redovi
+
+Red makroa, verzije, činjenice ili kategorije koji ne može da se dešifruje se preskače i ne zaustavlja pokretanje ni
+izvoz (makro bez čitljive trenutne verzije se ne prikazuje). Pogrešan glavni ključ se otkriva pre toga, pri startu,
+preko `key_check`.

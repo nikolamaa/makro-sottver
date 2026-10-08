@@ -2,14 +2,18 @@
  * HTTP layer (Fastify). Binds to 127.0.0.1 only. Because there is no login, every API request must prove it
  * comes from the MacroPilot UI itself:
  *   - Host header must be the local server (blocks DNS-rebinding attacks from malicious web pages),
- *   - the custom header `X-MacroPilot: 1` is required (a cross-site page cannot send it without a CORS
- *     preflight, which this server never approves),
+ *   - the header `X-MacroPilot: <access token>` is required. The token is derived from the master key (see
+ *     deriveAccessToken), so other OS users on the same machine cannot compute it, and a cross-site page can
+ *     neither know it nor send a custom header without a CORS preflight, which this server never approves,
  *   - when an Origin header is present it must be the app's own origin.
+ * "Is this an API request" is decided from the matched route and the percent-decoded path, never from the raw URL
+ * string alone (the router decodes `/%61pi/...` to `/api/...`).
  */
+import { timingSafeEqual } from 'node:crypto';
 import Fastify, { type FastifyError, type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { z, ZodError } from 'zod';
-import { API_CLIENT_HEADER, API_CLIENT_HEADER_VALUE, type HealthResponse } from '../../shared/api.js';
+import { API_ACCESS_DENIED, API_CLIENT_HEADER, type HealthResponse } from '../../shared/api.js';
 import {
   INTENTS,
   type AppSettings,
@@ -33,6 +37,8 @@ export interface AppContext {
   isDev: boolean;
   webDir: string | null;
   masterKey: Buffer;
+  /** Required in the X-MacroPilot header of every /api request (see deriveAccessToken). */
+  accessToken: string;
   library: LibraryService;
   assist: AssistService;
   ai: AiService;
@@ -81,6 +87,7 @@ const PersonalizeSchema = z.object({
   mode: z.enum(['fast', 'ai']),
 });
 const DraftSchema = z.object({ message: z.string().max(20000), variables: VariablesSchema });
+const RerankSchema = z.object({ message: z.string().max(20000), variables: VariablesSchema });
 const EventSchema = z.object({
   type: z.enum(['recommendation_shown', 'recommendation_selected', 'reply_copied', 'no_match']),
   macroIds: z.array(z.string().max(64)).max(3).optional(),
@@ -90,7 +97,11 @@ const EventSchema = z.object({
   editRatio: z.number().min(0).max(1).optional(),
   mode: z.enum(['fast', 'ai']).optional(),
 });
-const ImportPreviewSchema = z.object({ format: z.enum(['csv', 'json', 'text']), content: z.string().max(2_200_000) });
+/** Large libraries (plain JSON exports, decrypted backups): the importer allows up to 30 MB / 20000 macros. */
+const IMPORT_MAX_CONTENT_CHARS = 30 * 1024 * 1024;
+const IMPORT_MAX_ITEMS = 20_000;
+const IMPORT_BODY_LIMIT = 40 * 1024 * 1024;
+const ImportPreviewSchema = z.object({ format: z.enum(['csv', 'json', 'text']), content: z.string().max(IMPORT_MAX_CONTENT_CHARS) });
 const ImportItemSchema = z.object({
   title: str(200),
   body: str(20000),
@@ -102,9 +113,18 @@ const ImportItemSchema = z.object({
   shortcut: str(60).default(''),
   facts: z.array(FactInputSchema).max(100).default([]),
   duplicateOf: z.string().max(64).nullable().default(null),
+  // MacroPilot export/backup only (see ImportItem): without these, zod strips them and a restore
+  // brings archived macros back as active and drops favorites and category colors.
+  archived: z.boolean().optional(),
+  isFavorite: z.boolean().optional(),
+  categoryColor: z
+    .string()
+    .regex(/^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i)
+    .nullable()
+    .optional(),
 });
 const ImportCommitSchema = z.object({
-  items: z.array(ImportItemSchema).max(5000),
+  items: z.array(ImportItemSchema).max(IMPORT_MAX_ITEMS),
   onDuplicate: z.enum(['skip', 'new_version', 'create_copy']),
 });
 
@@ -135,6 +155,27 @@ function statusForAiError(err: AiError): number {
 
 const VALIDATION_MESSAGE = /(is required|must be|invalid|too long|not allowed|between)/i;
 
+function isApiPath(path: string): boolean {
+  const p = path.toLowerCase();
+  return p === '/api' || p.startsWith('/api/');
+}
+
+/**
+ * True for every request that reaches (or could reach) the API: decided from the route the router matched and from
+ * the percent-decoded path, so `/%61pi/settings` cannot skip the checks. Undecodable paths count as API (fail closed).
+ */
+export function isApiRequest(req: FastifyRequest): boolean {
+  const route = req.routeOptions.url;
+  if (route !== undefined && isApiPath(route)) return true;
+  const rawPath = req.url.split('?', 1)[0] ?? '';
+  if (isApiPath(rawPath)) return true;
+  try {
+    return isApiPath(decodeURIComponent(rawPath));
+  } catch {
+    return true;
+  }
+}
+
 export async function buildApp(ctx: AppContext): Promise<FastifyInstance> {
   const app = Fastify({ logger: false, bodyLimit: 3 * 1024 * 1024, trustProxy: false });
 
@@ -147,13 +188,20 @@ export async function buildApp(ctx: AppContext): Promise<FastifyInstance> {
     }
   }
 
+  const expectedToken = Buffer.from(ctx.accessToken, 'utf8');
+  const hasValidToken = (value: string | string[] | undefined): boolean => {
+    if (typeof value !== 'string' || expectedToken.length === 0) return false;
+    const given = Buffer.from(value, 'utf8');
+    return given.length === expectedToken.length && timingSafeEqual(given, expectedToken);
+  };
+
   app.addHook('onRequest', async (req: FastifyRequest, reply: FastifyReply) => {
     const host = (req.headers.host ?? '').toLowerCase();
     if (!allowedHosts.has(host)) return reply.code(403).send({ error: 'Forbidden host' });
-    if (req.url.startsWith('/api/')) {
-      if (req.headers[API_CLIENT_HEADER] !== API_CLIENT_HEADER_VALUE) return reply.code(403).send({ error: 'Missing client header' });
+    if (isApiRequest(req)) {
       const origin = req.headers.origin;
       if (origin && !allowedOrigins.has(origin.toLowerCase())) return reply.code(403).send({ error: 'Forbidden origin' });
+      if (!hasValidToken(req.headers[API_CLIENT_HEADER])) return reply.code(403).send({ error: API_ACCESS_DENIED });
     }
   });
 
@@ -163,7 +211,7 @@ export async function buildApp(ctx: AppContext): Promise<FastifyInstance> {
     reply.header('X-Frame-Options', 'DENY');
     reply.header('Cross-Origin-Opener-Policy', 'same-origin');
     reply.header('Cross-Origin-Resource-Policy', 'same-origin');
-    if (req.url.startsWith('/api/')) {
+    if (isApiRequest(req)) {
       reply.header('Cache-Control', 'no-store');
     } else {
       reply.header(
@@ -245,7 +293,7 @@ export async function buildApp(ctx: AppContext): Promise<FastifyInstance> {
   // Assist -------------------------------------------------------------------
   app.post('/api/recommend', async (req) => ctx.assist.recommend(parse(MessageSchema, req.body).message));
   app.post('/api/rerank', async (req, reply) => {
-    const { message } = parse(MessageSchema, req.body);
+    const { message, variables } = parse(RerankSchema, req.body);
     // The browser aborts the double-check when the message changes: stop the AI call too (cost, busy local model).
     const dropped = new AbortController();
     const onClose = () => {
@@ -253,7 +301,7 @@ export async function buildApp(ctx: AppContext): Promise<FastifyInstance> {
     };
     reply.raw.once('close', onClose);
     try {
-      return await ctx.assist.rerank(message, dropped.signal);
+      return await ctx.assist.rerank(message, variables, dropped.signal);
     } finally {
       reply.raw.off('close', onClose);
     }
@@ -268,16 +316,16 @@ export async function buildApp(ctx: AppContext): Promise<FastifyInstance> {
   });
 
   // Import / export ----------------------------------------------------------
-  app.post('/api/import/preview', async (req) => {
+  app.post('/api/import/preview', { bodyLimit: IMPORT_BODY_LIMIT }, async (req) => {
     const body = parse(ImportPreviewSchema, req.body);
     return parseImport(body.format, body.content, ctx.library.titles());
   });
-  app.post('/api/import/commit', async (req) => {
+  app.post('/api/import/commit', { bodyLimit: IMPORT_BODY_LIMIT }, async (req) => {
     const body = parse(ImportCommitSchema, req.body) as ImportCommitRequest;
     return ctx.library.importItems(body, 'import');
   });
-  app.post('/api/import/backup', { bodyLimit: 40 * 1024 * 1024 }, async (req) => {
-    const body = parse(z.object({ backup: z.string().min(1).max(40 * 1024 * 1024), recoveryKey: z.string().min(1).max(200) }), req.body);
+  app.post('/api/import/backup', { bodyLimit: IMPORT_BODY_LIMIT }, async (req) => {
+    const body = parse(z.object({ backup: z.string().min(1).max(IMPORT_BODY_LIMIT), recoveryKey: z.string().min(1).max(200) }), req.body);
     let library: unknown;
     try {
       library = readBackup<{ library?: unknown }>(body.backup, body.recoveryKey).payload.library;
@@ -345,7 +393,7 @@ export async function buildApp(ctx: AppContext): Promise<FastifyInstance> {
   if (ctx.webDir) {
     await app.register(fastifyStatic, { root: ctx.webDir, index: ['index.html'], wildcard: false, cacheControl: false });
     app.setNotFoundHandler((req, reply) => {
-      if (req.method === 'GET' && !req.url.startsWith('/api/')) return reply.sendFile('index.html');
+      if (req.method === 'GET' && !isApiRequest(req)) return reply.sendFile('index.html');
       return reply.code(404).send({ error: 'Not found' });
     });
   } else {

@@ -7,7 +7,7 @@
  */
 import { useSyncExternalStore } from 'react';
 import type { HealthResponse } from '../shared/api';
-import type { AppSettings, Category, Id, Macro } from '../shared/types';
+import type { AppSettings, Category, Id, IsoDate, Macro } from '../shared/types';
 import { api } from './api';
 
 export type Page = 'assist' | 'library' | 'import' | 'settings';
@@ -111,8 +111,13 @@ export const actions = {
   setSettings(settings: AppSettings): void {
     setState({ settings });
   },
-  navigate(page: Page): void {
+  /**
+   * Go to `page`. `beforeGo` runs only when the navigation actually happens (right away, or once the guard lets
+   * the user leave): state meant for the target page must not be left behind by a cancelled navigation.
+   */
+  navigate(page: Page, beforeGo?: () => void): void {
     const go = () => {
+      beforeGo?.();
       if (typeof location !== 'undefined' && location.hash !== `#/${page}`) location.hash = `#/${page}`;
       setState({ page });
     };
@@ -124,12 +129,22 @@ export const actions = {
     navigationGuard = guard;
   },
   openInLibrary(id: Id): void {
-    setState({ libraryFocusId: id });
-    actions.navigate('library');
+    actions.navigate('library', () => setState({ libraryFocusId: id }));
   },
   useInAssist(id: Id): void {
-    setState({ assistPickId: id });
-    actions.navigate('assist');
+    actions.navigate('assist', () => setState({ assistPickId: id }));
+  },
+  /**
+   * A reply built from these macros was copied (the server bumped their use counts): mirror that locally instead
+   * of downloading the whole library again.
+   */
+  recordUse(ids: readonly Id[], at: IsoDate): void {
+    const used = new Set(ids);
+    setState((s) =>
+      s.macros.some((m) => used.has(m.id))
+        ? { macros: s.macros.map((m) => (used.has(m.id) ? { ...m, useCount: m.useCount + 1, lastUsedAt: at } : m)) }
+        : {},
+    );
   },
 };
 

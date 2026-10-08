@@ -207,19 +207,22 @@ export class AiService {
    * Never fails because of AI: on any AiError (not configured, strict local, budget, network, invalid output,
    * cancelled...) the original candidates are returned unchanged with aiUsed = false. `signal` cancels the provider
    * call (the browser dropped the request), so an outdated double-check does not keep running or occupy the model.
+   * `variables` are the agent-entered values (customer name...): like in personalize(), the personal ones are
+   * pseudonymized wherever they occur in the message, even when the analyzer did not detect them.
    */
   async rerank(input: {
     message: string;
     analysis: Analysis;
     candidates: Recommendation[];
     macros: ReadonlyMap<string, Macro>;
+    variables?: Record<string, string>;
     signal?: AbortSignal;
   }): Promise<RerankResult> {
     const local: RerankResult = { recommendations: input.candidates, aiUsed: false, usage: null };
     if (!input.candidates.length || input.signal?.aborted) return local;
     try {
       const { provider, settings } = this.require();
-      const view = privacyView(provider, settings, input.message, input.analysis, {});
+      const view = privacyView(provider, settings, input.message, input.analysis, input.variables ?? {});
       const candidates = input.candidates.map((c) => rankCandidate(c, input.macros.get(c.macroId)));
       const spec = rankPrompt(view.message, analysisForPrompt(input.analysis, view.mask), candidates);
       const { data, usage } = await this.run('rerank', provider, settings, spec, input.signal);
@@ -348,7 +351,11 @@ function isPaid(provider: LlmProvider): boolean {
   return provider.id === 'anthropic';
 }
 
-/** Pseudonymizes only when text leaves the computer and the user asked for it. */
+/**
+ * Pseudonymizes only when text leaves the computer and the user asked for it. Every AI feature (personalize,
+ * draft, rerank) builds its prompt from this view: analyzer entities, the built-in PII scrubber and the personal
+ * agent-entered variables are all replaced with ⟦TYPE_n⟧ tokens.
+ */
 function privacyView(
   provider: LlmProvider,
   settings: AppSettings,
@@ -362,7 +369,16 @@ function privacyView(
 
 function pseudonymizedView(message: string, analysis: Analysis, variables: Record<string, string>): PrivacyView {
   const personal = Object.fromEntries(Object.entries(variables).filter(([name]) => isPersonalVariable(name)));
-  const result = pseudonymize(message, analysis.entities, personal);
+  // Other customer-derived text the prompts show: the PII scrubber also looks at it (e.g. a card number in a
+  // free-text variable), so mask() below replaces what it finds there.
+  const otherTexts = [
+    ...Object.entries(variables)
+      .filter(([name]) => !isPersonalVariable(name))
+      .map(([, value]) => value),
+    ...analysis.questions.map((q) => q.text),
+    ...analysis.rgSignals,
+  ];
+  const result = pseudonymize(message, analysis.entities, personal, otherTexts);
   const mapping = { ...result.mapping };
   const tokenByValue = new Map(Object.entries(mapping).map(([token, value]) => [value, token]));
   const personalTokens = new Map(Object.entries(personal).map(([name, value]) => [name, tokenFor(name, value, mapping, tokenByValue)]));

@@ -259,7 +259,12 @@ describe('personalize', () => {
     expect(req.user).toContain('Where is it? (⟦EMAIL_2⟧)');
     expect(req.user).toContain('250 USDT');
     expect(req.user).toContain('amount: 250');
-    expect(vi.mocked(pseudonymize)).toHaveBeenCalledWith(MESSAGE, analysis.entities, { user: 'John', email: 'john@example.com' });
+    // Non-personal variable values and the detected questions also go through the PII scrubber.
+    expect(vi.mocked(pseudonymize)).toHaveBeenCalledWith(MESSAGE, analysis.entities, { user: 'John', email: 'john@example.com' }, [
+      '250',
+      'USDT',
+      'Where is it? (john@example.com)',
+    ]);
 
     expect(res.text).toBe('Hi John,\n\nSorry for the wait. Your withdrawal of 250 USDT is being processed. ETA: [ENTER ETA TIME].\nWe will email john@example.com.');
     expect(res.unansweredQuestions).toEqual(['Why is john@example.com not confirmed?']);
@@ -568,6 +573,15 @@ describe('rerank', () => {
     const plain = fakeProvider({ answer: rankAll });
     await serviceWith(plain, settingsWith({ ai: { pseudonymize: false } })).service.rerank(input);
     expect(plain.requests[0]!.user).toContain('john@example.com');
+  });
+
+  it('pseudonymizes the agent-entered personal variables the analyzer did not detect', async () => {
+    const provider = fakeProvider({ answer: rankAll });
+    const message = 'Hi, John here. Where is my withdrawal?';
+    await serviceWith(provider).service.rerank({ ...input, message, analysis: { ...analysis, entities: [] }, variables: { user: 'John', eta_time: '24 hours' } });
+    expect(vi.mocked(pseudonymize)).toHaveBeenLastCalledWith(message, [], { user: 'John' }, expect.arrayContaining(['24 hours']));
+    expect(provider.requests[0]!.user).not.toContain('John');
+    expect(provider.requests[0]!.user).toContain('Hi, ⟦KNOWN_1⟧ here.');
   });
 
   it('skips the call when there is nothing to rank', async () => {

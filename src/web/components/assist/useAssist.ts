@@ -4,7 +4,7 @@
  *   message -> debounce 120 ms -> POST /api/recommend (previous request aborted) -> auto-select #1
  *   shown result -> (AI ready + double-check on) -> POST /api/rerank -> AI scores in place, never reorders
  *   selection/variables -> POST /api/personalize (fast) -> editor -> optional AI polish
- *   copy -> placeholder guard -> clipboard -> usage event (+ background macro refresh)
+ *   copy -> placeholder guard -> clipboard -> usage event (+ local use-count bump, no library refetch)
  *
  * The page state survives switching to the Library and back (module-level snapshot).
  */
@@ -313,17 +313,23 @@ export function shouldRerank(state: Pick<AssistState, 'message' | 'result' | 're
 }
 
 /**
- * Requests the AI double-check of the result for `message` after `delayMs`. Returns the cancel function: it
- * aborts the request and reports a check that was still running as stopped. Failures are silent (no toast):
- * the "AI checking" indicator just disappears and the local result stays as it is.
+ * Requests the AI double-check of the result for `message` after `delayMs`. `variables` is read when the request
+ * is sent: the agent-entered values (customer name...) let the server pseudonymize them for a cloud AI. Returns the
+ * cancel function: it aborts the request and reports a check that was still running as stopped. Failures are
+ * silent (no toast): the "AI checking" indicator just disappears and the local result stays as it is.
  */
-export function scheduleRerank(message: string, dispatch: Dispatch<AssistAction>, delayMs = RERANK_DELAY_MS): () => void {
+export function scheduleRerank(
+  message: string,
+  dispatch: Dispatch<AssistAction>,
+  delayMs = RERANK_DELAY_MS,
+  variables: () => Record<string, string> = () => ({}),
+): () => void {
   const ctrl = new AbortController();
   let pending = false;
   const timer = setTimeout(() => {
     pending = true;
     dispatch({ type: 'rerankStarted', message });
-    api('POST /api/rerank', { body: { message }, signal: ctrl.signal })
+    api('POST /api/rerank', { body: { message, variables: variables() }, signal: ctrl.signal })
       .then((res) => {
         pending = false;
         dispatch({ type: 'reranked', message, res });
@@ -351,7 +357,8 @@ function useRerank(state: AssistState, dispatch: Dispatch<AssistAction>, stateRe
   useEffect(() => {
     // The check's own progress is read from the ref so that its updates do not restart it.
     if (!shouldRerank({ message, result, resultFor, rerank: stateRef.current.rerank }, enabled)) return;
-    return scheduleRerank(resultFor, dispatch);
+    const variables = () => requestVariables(stateRef.current.customerName, stateRef.current.overrides);
+    return scheduleRerank(resultFor, dispatch, RERANK_DELAY_MS, variables);
   }, [enabled, result, resultFor, message, dispatch, stateRef]);
 }
 

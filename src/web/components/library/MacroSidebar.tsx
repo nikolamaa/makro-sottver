@@ -2,8 +2,9 @@
  * Library list column: instant fuzzy search, filters, sort and a keyboard-driven listbox.
  *   ↑/↓ (Home/End/PgUp/PgDn) move the highlight when the list is focused, Enter opens, "/" focuses search.
  *   In the search box: ↓ jumps into the list, Enter opens the highlighted (best) match, Esc clears.
+ * The listbox is windowed (fixed row height): only the rows in view are rendered, so 2,000 macros stay instant.
  */
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import type { Category, Id, Macro } from '../../../shared/types';
 import { useHotkeys } from '../../hotkeys';
 import { actions } from '../../store';
@@ -24,9 +25,20 @@ import {
   type MacroFilters,
   type SortKey,
 } from './search';
+import { listWindow, scrollTopToReveal } from './virtualList';
 
 const SORT_STORAGE_KEY = 'macropilot.library.sort';
 const PAGE_STEP = 10;
+/** Must match `.lib-row` height and `.lib-list` vertical padding in library.css. */
+const ROW_HEIGHT = 48;
+const LIST_INSET = 4;
+/** Rows rendered above and below the visible ones. */
+const OVERSCAN = 8;
+/** List height assumed until it is measured. */
+const INITIAL_VIEWPORT = 800;
+
+/** Scroll offset rounded down to a whole row: re-render only when the rendered rows can change. */
+const snapToRow = (scrollTop: number) => Math.floor(scrollTop / ROW_HEIGHT) * ROW_HEIGHT;
 
 export interface MacroSidebarProps {
   macros: Macro[];
@@ -63,6 +75,8 @@ export const MacroSidebar = memo(function MacroSidebar({
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const scrollToCursor = useRef(false);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(INITIAL_VIEWPORT);
 
   const query = filters.query.trim();
   const effectiveSort: SortKey = query ? (searchSort ?? 'relevance') : sort;
@@ -101,11 +115,30 @@ export const MacroSidebar = memo(function MacroSidebar({
   }, [items, cursorId, activeId, query]);
   const cursorMacro = cursorIndex >= 0 ? items[cursorIndex] : undefined;
 
-  useEffect(() => {
-    if (!scrollToCursor.current || !cursorMacro) return;
+  // Measure the list (it only exists while there are rows) and follow its size.
+  const hasList = items.length > 0;
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const measure = () => setViewportHeight(el.clientHeight);
+    measure();
+    setScrollTop(snapToRow(el.scrollTop));
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasList]);
+
+  // Scroll the cursor row into view before paint, so the row aria-activedescendant points to is rendered.
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    if (!scrollToCursor.current || cursorIndex < 0 || !el) return;
     scrollToCursor.current = false;
-    document.getElementById(optionId(cursorMacro.id))?.scrollIntoView({ block: 'nearest' });
-  }, [cursorMacro]);
+    el.scrollTop = scrollTopToReveal(cursorIndex, ROW_HEIGHT, el.scrollTop, el.clientHeight, LIST_INSET);
+    setScrollTop(snapToRow(el.scrollTop));
+  }, [cursorMacro, cursorIndex]);
+
+  const win = listWindow(items.length, ROW_HEIGHT, scrollTop, viewportHeight, OVERSCAN, LIST_INSET);
 
   const moveCursor = useCallback(
     (delta: number | 'first' | 'last') => {
@@ -336,18 +369,23 @@ export const MacroSidebar = memo(function MacroSidebar({
           aria-label="Macros"
           aria-activedescendant={cursorMacro ? optionId(cursorMacro.id) : undefined}
           onKeyDown={onListKeyDown}
+          onScroll={(e) => setScrollTop(snapToRow(e.currentTarget.scrollTop))}
         >
-          {items.map((m) => (
-            <MacroRow
-              key={m.id}
-              macro={m}
-              category={m.categoryId ? categoryById.get(m.categoryId) : undefined}
-              open={m.id === activeId}
-              cursor={m.id === cursorMacro?.id}
-              sort={effectiveSort}
-              onClick={onRowClick}
-            />
-          ))}
+          <div role="presentation" style={{ paddingTop: win.padTop, paddingBottom: win.padBottom }}>
+            {items.slice(win.start, win.end).map((m, i) => (
+              <MacroRow
+                key={m.id}
+                macro={m}
+                category={m.categoryId ? categoryById.get(m.categoryId) : undefined}
+                open={m.id === activeId}
+                cursor={m.id === cursorMacro?.id}
+                sort={effectiveSort}
+                position={win.start + i + 1}
+                setSize={items.length}
+                onClick={onRowClick}
+              />
+            ))}
+          </div>
         </div>
       )}
 
@@ -369,6 +407,8 @@ const MacroRow = memo(function MacroRow({
   open,
   cursor,
   sort,
+  position,
+  setSize,
   onClick,
 }: {
   macro: Macro;
@@ -376,6 +416,9 @@ const MacroRow = memo(function MacroRow({
   open: boolean;
   cursor: boolean;
   sort: SortKey;
+  /** 1-based position in the whole (windowed) list, for screen readers. */
+  position: number;
+  setSize: number;
   onClick: (id: Id) => void;
 }) {
   const meta =
@@ -391,6 +434,8 @@ const MacroRow = memo(function MacroRow({
       id={optionId(macro.id)}
       role="option"
       aria-selected={open}
+      aria-posinset={position}
+      aria-setsize={setSize}
       className={`lib-row${open ? ' is-open' : ''}${cursor ? ' is-cursor' : ''}${macro.archivedAt ? ' is-archived' : ''}`}
       onClick={() => onClick(macro.id)}
     >

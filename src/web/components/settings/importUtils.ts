@@ -3,6 +3,35 @@
  */
 import type { ImportCommitResult, ImportFormat } from '../../../shared/types';
 
+/** Largest content one preview request may carry, in UTF-8 bytes (the server's IMPORT_LIMITS.maxContentBytes). */
+export const IMPORT_MAX_CONTENT_BYTES = 30 * 1024 * 1024;
+/** The commit route accepts 40 MB request bodies; large imports are committed in batches well below that. */
+export const COMMIT_BATCH_BYTES = 16_000_000;
+export const COMMIT_BATCH_ITEMS = 5000;
+
+/** UTF-8 size of `text` in bytes, counted without encoding it (lone surrogates count as U+FFFD, like the server). */
+export function utf8Length(text: string): number {
+  let bytes = 0;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff && (text.charCodeAt(i + 1) & 0xfc00) === 0xdc00) {
+      bytes += 4;
+      i++;
+    } else bytes += 3;
+  }
+  return bytes;
+}
+
+/** True when the content is larger than the server accepts in one import (measured in UTF-8 bytes, as there). */
+export function exceedsImportLimit(text: string): boolean {
+  // Every UTF-16 code unit takes 1 to 3 UTF-8 bytes, so most texts are decided without counting.
+  if (text.length > IMPORT_MAX_CONTENT_BYTES) return true;
+  if (text.length * 3 <= IMPORT_MAX_CONTENT_BYTES) return false;
+  return utf8Length(text) > IMPORT_MAX_CONTENT_BYTES;
+}
+
 /** File extension -> import tab. Returns null for unsupported files. */
 export function formatFromFileName(name: string): ImportFormat | null {
   const dot = name.lastIndexOf('.');

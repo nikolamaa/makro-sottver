@@ -2,12 +2,12 @@
 /**
  * One-click launcher used by MacroPilot.cmd / macropilot.sh:
  *   1. checks the Node.js version,
- *   2. installs dependencies on first run,
- *   3. (re)builds when sources are newer than the last build,
- *   4. starts the server (which opens the browser).
+ *   2. installs dependencies on first run, and again after an update changed package.json / package-lock.json,
+ *   3. (re)builds when sources are newer than the last build (always after a dependency install),
+ *   4. starts the server (which opens the browser, or opens the already running MacroPilot).
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -21,10 +21,10 @@ if (major < 22 || (major === 22 && minor < 13)) {
   process.exit(1);
 }
 
-function run(args) {
+function run(args, hint = '') {
   const r = spawnSync(npm, args, { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
   if (r.status !== 0) {
-    console.error(`\n"npm ${args.join(' ')}" failed.`);
+    console.error(`\n"npm ${args.join(' ')}" failed.${hint}`);
     process.exit(r.status ?? 1);
   }
 }
@@ -38,9 +38,30 @@ function newestMtime(dir) {
   return newest;
 }
 
-if (!existsSync(join(root, 'node_modules'))) {
-  console.log('[macropilot] First run: installing dependencies (one time, ~1 minute)...');
+const mtime = (file) => (existsSync(file) ? statSync(file).mtimeMs : 0);
+/** npm's record of the installed tree; older than package.json / package-lock.json means an update changed dependencies. */
+const installMarker = join(root, 'node_modules', '.package-lock.json');
+
+function dependenciesOutdated() {
+  if (!existsSync(installMarker)) return true;
+  const installed = mtime(installMarker);
+  return mtime(join(root, 'package.json')) > installed || mtime(join(root, 'package-lock.json')) > installed;
+}
+
+let installed = false;
+if (!existsSync(join(root, 'node_modules')) || dependenciesOutdated()) {
+  console.log(
+    existsSync(join(root, 'node_modules'))
+      ? '[macropilot] Dependencies changed: updating them (about a minute)...'
+      : '[macropilot] First run: installing dependencies (one time, ~1 minute)...',
+  );
   run(['install', '--no-audit', '--no-fund']);
+  // npm may rewrite package-lock.json after its marker: mark the install as current so the next start skips it.
+  if (existsSync(installMarker)) {
+    const now = new Date();
+    utimesSync(installMarker, now, now);
+  }
+  installed = true;
 }
 
 const sourcesChanged = () => {
@@ -49,9 +70,9 @@ const sourcesChanged = () => {
   return newestMtime(join(root, 'src')) > built || statSync(join(root, 'package.json')).mtimeMs > built;
 };
 
-if (sourcesChanged()) {
+if (installed || sourcesChanged()) {
   console.log('[macropilot] Building the app...');
-  run(['run', 'build']);
+  run(['run', 'build'], ' If it says a module cannot be found, run "npm install" in this folder and start MacroPilot again.');
   writeFileSync(stampFile, new Date().toISOString());
 }
 

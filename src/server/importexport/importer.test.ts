@@ -409,6 +409,7 @@ describe('toExportJson', () => {
         title: 'Pending withdrawal',
         body: macros[0]?.body,
         category: 'Withdrawals',
+        categoryColor: '#4f7cff',
         tags: ['withdrawal', 'crypto'],
         intents: ['withdrawal_pending'],
         triggers: ['where is my withdrawal', 'withdrawal stuck'],
@@ -432,6 +433,33 @@ describe('toExportJson', () => {
     expect(second?.category).toBe('Bonuses');
     expect(second?.facts[0]?.status).toBe('contradicted');
     expect(third?.category).toBeNull();
+  });
+
+  it('keeps archived state, favorites and category colors of the native format', () => {
+    const preview = parseImport('json', toExportJson(macros, CATEGORIES), [{ id: 'live', title: 'Weekly bonus' }]);
+    const [first, second, third] = preview.items;
+    expect(first).not.toHaveProperty('archived');
+    expect(first).not.toHaveProperty('isFavorite');
+    expect(second).toMatchObject({ archived: true, isFavorite: true, category: 'Bonuses', categoryColor: '#ff9f43' });
+    // An archived macro is restored to the archive, so it never duplicates the active macro with its title.
+    expect(second?.duplicateOf).toBeNull();
+    expect(third).not.toHaveProperty('categoryColor');
+  });
+
+  it('reads category colors by name from any categories list, but archived/favorite flags only from the native format', () => {
+    const categories = [
+      { id: 'c1', name: 'VIP', color: '#AbC' },
+      { id: 'c2', name: 'Bad', color: 'red; background: url(https://x)' },
+    ];
+    const entries = [
+      { title: 'A', body: 'a', category: '  vip ', archived: true, isFavorite: true },
+      { title: 'B', body: 'b', categoryId: 'c2' },
+    ];
+    const plain = parseImport('json', JSON.stringify({ categories, macros: entries }), NO_EXISTING);
+    expect(plain.items[0]).toEqual(item({ title: 'A', body: 'a', category: 'vip', categoryColor: '#AbC' }));
+    expect(plain.items[1]).toEqual(item({ title: 'B', body: 'b', category: 'Bad' }));
+    const native = parseImport('json', JSON.stringify({ format: 'macropilot-macros', version: 1, categories, macros: entries }), NO_EXISTING);
+    expect(native.items[0]).toMatchObject({ archived: true, isFavorite: true, categoryColor: '#AbC' });
   });
 
   it('exports an empty library as a valid, importable file', () => {
@@ -540,30 +568,38 @@ describe('parseImport duplicates', () => {
 });
 
 describe('parseImport limits', () => {
-  it('rejects content above 2 MB', () => {
-    const preview = parseImport('text', `Title\n${'x'.repeat(2 * 1024 * 1024)}`, NO_EXISTING);
+  it('rejects content above 30 MB', () => {
+    const preview = parseImport('text', `Title\n${'x'.repeat(30 * 1024 * 1024)}`, NO_EXISTING);
     expect(preview.items).toEqual([]);
     expect(preview.errors).toHaveLength(1);
-    expect(preview.errors[0]).toMatch(/too large .* maximum is 2 MB/);
+    expect(preview.errors[0]).toMatch(/too large .* maximum is 30 MB/);
   });
 
-  it('rounds the reported size up so content just over the limit does not read as "2.0 MB"', () => {
-    const preview = parseImport('text', 'x'.repeat(2 * 1024 * 1024 + 1), NO_EXISTING);
-    expect(preview.errors).toEqual(['The content is too large (2.1 MB); the maximum is 2 MB. Split it into smaller files.']);
-    expect(parseImport('text', `Title\n${'x'.repeat(2 * 1024 * 1024 - 6)}`, NO_EXISTING).errors[0]).not.toMatch(/too large/);
+  it('rounds the reported size up so content just over the limit does not read as "30.0 MB"', () => {
+    const preview = parseImport('text', 'x'.repeat(30 * 1024 * 1024 + 1), NO_EXISTING);
+    expect(preview.errors).toEqual(['The content is too large (30.1 MB); the maximum is 30 MB. Split it into smaller files.']);
   });
 
-  it('rejects more than 5000 macros', () => {
-    const rows = Array.from({ length: 5001 }, (_, i) => `M${i},B`);
+  it('accepts large libraries up to 30 MB (no longer capped at 2 MB)', () => {
+    const body = 'b'.repeat(15_000);
+    const json = JSON.stringify(Array.from({ length: 200 }, (_, i) => ({ title: `M${i}`, body })));
+    expect(json.length).toBeGreaterThan(2 * 1024 * 1024);
+    const preview = parseImport('json', json, NO_EXISTING);
+    expect(preview.errors).toEqual([]);
+    expect(preview.items).toHaveLength(200);
+  });
+
+  it('rejects more than 20000 macros', () => {
+    const rows = Array.from({ length: 20_001 }, (_, i) => `M${i},B`);
     const preview = parseImport('csv', `title,body\n${rows.join('\n')}`, NO_EXISTING);
     expect(preview.items).toEqual([]);
-    expect(preview.errors).toEqual(['Too many macros (5001); import at most 5000 at a time by splitting the file.']);
+    expect(preview.errors).toEqual(['Too many macros (20001); import at most 20000 at a time by splitting the file.']);
   });
 
-  it('accepts exactly 5000 macros', () => {
-    const rows = Array.from({ length: 5000 }, (_, i) => `M${i},B`);
+  it('accepts exactly 20000 macros', () => {
+    const rows = Array.from({ length: 20_000 }, (_, i) => `M${i},B`);
     const preview = parseImport('csv', `title,body\n${rows.join('\n')}`, NO_EXISTING);
-    expect(preview.items).toHaveLength(5000);
+    expect(preview.items).toHaveLength(20_000);
     expect(preview.errors).toEqual([]);
   });
 

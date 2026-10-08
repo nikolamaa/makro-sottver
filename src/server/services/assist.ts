@@ -74,10 +74,12 @@ export class AssistService {
    * AI double-check of the recommendations: the local analysis + search over RERANK_CANDIDATES candidates, then the
    * AI re-scores them (AiService.rerank applies strict local mode, the budget and pseudonymization, and falls back
    * to the local candidates on any AI error). Returns the best settings.recommendation.maxResults. When the AI is
-   * not ready or ai.rerank is off, the local result is returned without calling it. `signal` (the browser dropped
-   * the request, e.g. because the message changed) cancels the AI call.
+   * not ready or ai.rerank is off, the local result is returned without calling it. `variables` are the
+   * agent-entered values (customer name as `user`...; cleaned like for personalize): the AI pseudonymizes the
+   * personal ones in the message. `signal` (the browser dropped the request, e.g. because the message changed)
+   * cancels the AI call.
    */
-  async rerank(message: string, signal?: AbortSignal): Promise<RerankResponse> {
+  async rerank(message: string, variables?: Record<string, string>, signal?: AbortSignal): Promise<RerankResponse> {
     const text = this.checkMessage(message);
     if (!text.trim()) return { recommendations: [], noGoodMatch: false, aiUsed: false, llm: null };
     const settings = this.settings();
@@ -97,7 +99,14 @@ export class AssistService {
       const macro = this.findMacro(rec.macroId);
       if (macro) macros.set(macro.id, macro);
     }
-    const ranked = await this.ai.rerank({ message: text, analysis, candidates: local.recommendations, macros, signal });
+    const ranked = await this.ai.rerank({
+      message: text,
+      analysis,
+      candidates: local.recommendations,
+      macros,
+      variables: { ...variablesFromAnalysis(analysis), ...cleanVariables(variables) },
+      signal,
+    });
     if (!ranked.aiUsed) return localResult;
     const recommendations = ranked.recommendations.slice(0, maxResults);
     return {

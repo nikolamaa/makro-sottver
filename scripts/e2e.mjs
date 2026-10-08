@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
  * `npm run test:e2e` - end-to-end smoke test in a real (headless) Chromium against the built app:
+ * access only through the launcher link (read from the server log), single instance per data folder,
  * first-run recovery key dialog, paste a customer message, recommendations, personalized reply, copy to the
  * clipboard, the AI double-check (with a faked AI), quick search, Library / Import / Settings pages. Fails on any
  * browser console error.
@@ -32,25 +33,27 @@ if (!existsSync(join(root, 'dist/node/server/index.js')) || !existsSync(join(roo
 mkdirSync(shots, { recursive: true });
 
 const tmp = mkdtempSync(join(tmpdir(), 'macropilot-e2e-'));
-const server = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', join(root, 'dist/node/server/index.js')], {
-  cwd: root,
-  env: {
-    ...process.env,
-    MACROPILOT_PORT: String(PORT),
-    MACROPILOT_DATA_DIR: join(tmp, 'data'),
-    MACROPILOT_KEY_DIR: join(tmp, 'keys'),
-    MACROPILOT_DISABLE_KEYCHAIN: '1',
-    MACROPILOT_NO_OPEN: '1',
-  },
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
+const serverArgs = ['--disable-warning=ExperimentalWarning', join(root, 'dist/node/server/index.js')];
+const serverEnv = {
+  ...process.env,
+  MACROPILOT_PORT: String(PORT),
+  MACROPILOT_DATA_DIR: join(tmp, 'data'),
+  MACROPILOT_KEY_DIR: join(tmp, 'keys'),
+  MACROPILOT_DISABLE_KEYCHAIN: '1',
+  MACROPILOT_NO_OPEN: '1',
+};
+const server = spawn(process.execPath, serverArgs, { cwd: root, env: serverEnv, stdio: ['ignore', 'pipe', 'pipe'] });
 let serverLog = '';
 server.stdout.on('data', (d) => (serverLog += d));
 server.stderr.on('data', (d) => (serverLog += d));
 
+/** The access link the server prints (what the launcher opens): http://localhost:PORT/#/assist?k=<token>. */
+const ACCESS_LINK_RE = /is running at (http:\/\/localhost:\d+\/#\/assist\?k=[A-Za-z0-9_%-]+)/;
+
 async function waitForServer() {
   for (let i = 0; i < 100; i++) {
-    if (serverLog.includes('is running at')) return;
+    const link = ACCESS_LINK_RE.exec(serverLog)?.[1];
+    if (link) return link;
     if (server.exitCode !== null) throw new Error(`Server exited:\n${serverLog}`);
     await new Promise((r) => setTimeout(r, 100));
   }
@@ -68,8 +71,27 @@ const step = async (name, fn) => {
 };
 
 try {
-  await waitForServer();
+  const accessLink = await waitForServer();
+  assert(accessLink.startsWith(`${BASE}/#/assist?k=`), `access link on port ${PORT} (got ${accessLink})`);
   browser = await chromium.launch({ executablePath, args: ['--no-proxy-server'] });
+
+  await step('without the launcher link only the access screen is shown', async () => {
+    const stranger = await browser.newContext();
+    const other = await stranger.newPage();
+    await other.goto(BASE);
+    await other.getByText(/Open MacroPilot from the launcher/).waitFor();
+    assert((await other.getByRole('button', { name: 'Library', exact: true }).count()) === 0, 'no app UI without access');
+    await other.screenshot({ path: join(shots, '00-access-required.png') });
+    await stranger.close();
+  });
+
+  await step('a second launch on the same data folder opens the running instance instead of starting another', async () => {
+    const second = spawnSync(process.execPath, serverArgs, { cwd: root, env: serverEnv, encoding: 'utf8', timeout: 30_000 });
+    const out = `${second.stdout}${second.stderr}`;
+    assert(second.status === 0, `second launch exits 0 (got ${second.status}):\n${out}`);
+    assert(out.includes('already running') && out.includes(accessLink), `second launch points to the running instance:\n${out}`);
+  });
+
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: BASE });
   const page = await context.newPage();
@@ -79,7 +101,9 @@ try {
   page.on('pageerror', (err) => consoleErrors.push(String(err)));
 
   await step('first run shows the recovery key and can be acknowledged', async () => {
-    await page.goto(BASE);
+    await page.goto(accessLink);
+    await page.waitForFunction(() => location.hash === '#/assist');
+    assert(!page.url().includes('k='), `the token is removed from the address bar (got ${page.url()})`);
     const dialog = page.getByRole('dialog');
     await dialog.waitFor();
     const key = await dialog.getByLabel('Recovery key', { exact: true }).textContent();

@@ -2,7 +2,7 @@
  * Assist page keyboard shortcuts and the compact legend shown at the bottom of the page.
  */
 import { memo, useEffect, useMemo, type RefObject } from 'react';
-import { matchCombo, useHotkeys, type HotkeyMap } from '../../hotkeys';
+import { isEditable, matchCombo, useHotkeys, type HotkeyMap } from '../../hotkeys';
 import { Kbd } from '../../ui';
 import { shortcutReadsClipboard } from './clipboard';
 import { useScopedCaptureHotkeys, type ScopedHotkeyHandler } from './hooks';
@@ -32,9 +32,40 @@ function useReadClipboardHotkey(actions: AssistActions, messageRef: RefObject<HT
   }, [actions, messageRef]);
 }
 
+/** What Esc does for a key event on `target`: clear (new message), leave the text field, or nothing. */
+export type EscapeAction = 'clear' | 'blur' | 'none';
+
+/**
+ * Esc starts a new message from the page and from the customer message box (where focus sits after Ctrl+V). In
+ * any other text field of the page (reply editor, variables, customer name) it only leaves the field, so a reply
+ * being edited is never wiped by accident; a second Esc then clears. Text fields elsewhere are left alone.
+ */
+export function escapeAction(target: EventTarget | null, messageBox: Element | null, page: Element | null): EscapeAction {
+  if (target === messageBox || !isEditable(target)) return 'clear';
+  return page?.contains(target as Node) ? 'blur' : 'none';
+}
+
+function useEscapeHotkey(actions: AssistActions, refs: AssistHotkeyRefs): void {
+  const { message, page } = refs;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // Dialogs and the quick-search palette handle (and stop) their own Esc first.
+      if (e.defaultPrevented || e.isComposing || !matchCombo('escape', e)) return;
+      const action = escapeAction(e.target, message.current, page.current);
+      if (action === 'none') return;
+      e.preventDefault();
+      if (action === 'clear') actions.clear();
+      else (e.target as HTMLElement).blur();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [actions, message, page]);
+}
+
 /**
  * Register the Assist shortcuts. Alt+Shift+1..3 (combine) are scoped to this page and only fire when that
- * recommendation card exists.
+ * recommendation card exists. Plain 1..4 only fire outside text fields (there they are typed); Alt+1..4 work
+ * everywhere. Esc: see escapeAction.
  */
 export function useAssistHotkeys(actions: AssistActions, refs: AssistHotkeyRefs, recommendationCount: number): void {
   const keys = useMemo<HotkeyMap>(
@@ -49,7 +80,6 @@ export function useAssistHotkeys(actions: AssistActions, refs: AssistHotkeyRefs,
       'mod+j': actions.polish,
       'mod+e': actions.focusEditor,
       'alt+m': actions.focusMessage,
-      escape: actions.clear,
     }),
     [actions],
   );
@@ -70,6 +100,7 @@ export function useAssistHotkeys(actions: AssistActions, refs: AssistHotkeyRefs,
   useHotkeys(keys, [keys]);
   useScopedCaptureHotkeys(refs.page, combineKeys);
   useReadClipboardHotkey(actions, refs.message);
+  useEscapeHotkey(actions, refs);
 }
 
 const LEGEND: { combo: string; label: string }[] = [

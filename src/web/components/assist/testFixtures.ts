@@ -2,7 +2,7 @@
  * Test fixtures for the Assist modules (imported only by *.test.ts files).
  */
 import { detectedVariables } from './variables';
-import type { Analysis, DraftResponse, PersonalizeResponse, Recommendation, RecommendResponse, RerankResponse } from '../../../shared/types';
+import type { Analysis, DraftResponse, Macro, PersonalizeResponse, Recommendation, RecommendResponse, RerankResponse } from '../../../shared/types';
 
 export function analysisFixture(partial: Partial<Analysis> = {}): Analysis {
   return {
@@ -84,4 +84,28 @@ export function draftFixture(text: string, partial: Partial<DraftResponse> = {})
 /** An AI double-check answer (AI used, good match) with the given ranking. */
 export function rerankFixture(recommendations: Recommendation[], partial: Partial<RerankResponse> = {}): RerankResponse {
   return { recommendations, noGoodMatch: false, aiUsed: true, llm: null, ...partial };
+}
+
+export function macroFixture(id: string, useCount = 0, partial: Partial<Macro> = {}): Macro {
+  return {
+    id,
+    title: `Macro ${id}`,
+    body: 'Hi {{user|there}}, thanks for reaching out.',
+    categoryId: null,
+    tags: [],
+    intents: [],
+    triggers: [],
+    notes: '',
+    shortcut: '',
+    version: 1,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    archivedAt: null,
+    isFavorite: false,
+    useCount,
+    lastUsedAt: null,
+    verification: 'unverified',
+    facts: [],
+    ...partial,
+  };
 }

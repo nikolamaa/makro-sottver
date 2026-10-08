@@ -1,8 +1,9 @@
 /**
  * First-run recovery key dialog (mounted globally by App).
  *
- * On start it asks the server whether the recovery key has been acknowledged. If not, the key (which the server
- * keeps only until acknowledgement) is shown once with Copy / Download actions. The agent must tick
+ * On start it asks the server whether the recovery key has been acknowledged. If not, the key (the first-run key, or
+ * a new key generated in Settings > Security that was not confirmed yet; the server keeps it only until
+ * acknowledgement) is shown with Copy / Download actions. The agent must tick
  * "I have saved my recovery key" before Continue acknowledges it. "Remind me later" hides the dialog for this
  * browser session only. Settings > Security can reopen it via openRecoveryKeyDialog().
  */

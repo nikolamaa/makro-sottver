@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { addCommitResults, chunkForCommit, decodeFileBytes, formatFromFileName, guessFormat } from './importUtils';
+import {
+  addCommitResults,
+  chunkForCommit,
+  COMMIT_BATCH_BYTES,
+  COMMIT_BATCH_ITEMS,
+  decodeFileBytes,
+  exceedsImportLimit,
+  formatFromFileName,
+  guessFormat,
+  IMPORT_MAX_CONTENT_BYTES,
+  utf8Length,
+} from './importUtils';
 
 describe('formatFromFileName', () => {
   it('maps extensions to import tabs, case-insensitively', () => {
@@ -97,5 +108,35 @@ describe('chunkForCommit', () => {
       updated: 2,
       skipped: 4,
     });
+  });
+});
+
+describe('import size limits', () => {
+  it('matches the server: 30 MB of content, committed in batches below the 40 MB request limit', () => {
+    expect(IMPORT_MAX_CONTENT_BYTES).toBe(30 * 1024 * 1024);
+    expect(COMMIT_BATCH_BYTES).toBeLessThan(40 * 1024 * 1024);
+    expect(COMMIT_BATCH_ITEMS).toBeLessThanOrEqual(20_000);
+  });
+
+  it('counts UTF-8 bytes like the server', () => {
+    for (const text of ['', 'abc', 'ž', '€uro', '😀', 'a\ud800b', '\udc00', 'mixé 😀 €']) {
+      expect(utf8Length(text), JSON.stringify(text)).toBe(Buffer.byteLength(text, 'utf8'));
+    }
+  });
+
+  it('accepts content up to 30 MB (the old 2 million character cap is gone) and rejects more', () => {
+    expect(exceedsImportLimit('x'.repeat(5_000_000))).toBe(false);
+    expect(exceedsImportLimit('x'.repeat(IMPORT_MAX_CONTENT_BYTES))).toBe(false);
+    expect(exceedsImportLimit('x'.repeat(IMPORT_MAX_CONTENT_BYTES + 1))).toBe(true);
+    // 11 million two-byte characters are 22 MB (fine), 16 million are 32 MB (too much).
+    expect(exceedsImportLimit('ž'.repeat(11_000_000))).toBe(false);
+    expect(exceedsImportLimit('ž'.repeat(16_000_000))).toBe(true);
+  });
+
+  it('commits a 20000-macro import in a few batches', () => {
+    const items = Array.from({ length: 20_000 }, (_, i) => ({ title: `Macro ${i}`, body: 'x'.repeat(500) }));
+    const batches = chunkForCommit(items, COMMIT_BATCH_BYTES, COMMIT_BATCH_ITEMS);
+    expect(batches.length).toBe(4);
+    expect(batches.flat()).toHaveLength(20_000);
   });
 });

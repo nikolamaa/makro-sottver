@@ -2,8 +2,8 @@
  * HTTP API contract between the web UI and the local server.
  *
  * All endpoints are JSON, served on http://127.0.0.1:<port>/api.
- * Every request from the UI MUST send the header `X-MacroPilot: 1` (see API_CLIENT_HEADER);
- * the server rejects API requests without it (blocks cross-site requests from other web pages).
+ * Every request from the UI MUST send the header `X-MacroPilot: <access token>` (see API_CLIENT_HEADER);
+ * the server rejects API requests without a valid token (blocks other web pages and other OS users).
  * Errors are returned as { error: string } with a 4xx/5xx status.
  */
 import type {
@@ -28,15 +28,21 @@ import type {
   PersonalizeResponse,
   RecommendRequest,
   RecommendResponse,
-  RerankRequest,
   RerankResponse,
   SecurityStatus,
   UsageEventInput,
   UsageSummary,
 } from './types.js';
 
+/**
+ * Header that carries the per-install access token on every /api request. The token is
+ * HMAC-SHA256(subkey of the master key, 'macropilot-access-v1') in base64url: stable for one installation and
+ * derivable only by someone who can read the master key (the OS keychain or key file of this OS user).
+ * The launcher opens the UI at `http://localhost:<port>/#/assist?k=<token>`; the UI keeps it in localStorage.
+ */
 export const API_CLIENT_HEADER = 'x-macropilot';
-export const API_CLIENT_HEADER_VALUE = '1';
+/** `error` of the 403 answer when the access token is missing or wrong (the UI then asks to use the launcher link). */
+export const API_ACCESS_DENIED = 'Missing or invalid access token';
 
 export interface ApiError {
   error: string;
@@ -77,8 +83,12 @@ export interface ApiRoutes {
 
   // Assist
   'POST /api/recommend': { req: RecommendRequest; res: RecommendResponse };
-  /** Optional AI double-check of the local recommendations (local result when the AI is off/not ready/failing). */
-  'POST /api/rerank': { req: RerankRequest; res: RerankResponse };
+  /**
+   * Optional AI double-check of the local recommendations (local result when the AI is off/not ready/failing).
+   * `variables` are the agent-entered values (as for /api/personalize, e.g. the customer name as `user`): the
+   * personal ones are pseudonymized in the message before it goes to a cloud AI.
+   */
+  'POST /api/rerank': { req: { message: string; variables?: Record<string, string> }; res: RerankResponse };
   'POST /api/personalize': { req: PersonalizeRequest; res: PersonalizeResponse };
   'POST /api/draft': { req: DraftRequest; res: DraftResponse };
   'POST /api/events': { req: UsageEventInput; res: { ok: true } }; // reply_copied also bumps macro useCount

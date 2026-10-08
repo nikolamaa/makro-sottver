@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CONCEPTS, findConcepts } from '../domain/igaming.js';
 import { correctTypo, matchConcepts } from './concepts.js';
+import { conceptIdsOf } from './signals.js';
 
 const SAMPLES = [
   'my btc cashout is stuck',
@@ -54,5 +55,30 @@ describe('correctTypo', () => {
     for (const w of ['withdrawal', 'spending', 'leading', 'reading', 'layer', 'spots', 'total', 'broke', 'money', 'game', 'bet', 'trc20']) {
       expect(correctTypo(w), w).toBeNull();
     }
+  });
+
+  it('still corrects the longest terms (one letter too many or too few)', () => {
+    expect(correctTypo('cryptocurrencyy')).toBe('cryptocurrency');
+    expect(correctTypo('cryptocurency')).toBe('cryptocurrency');
+  });
+
+  it('skips very long letter-only tokens in constant time (no quadratic work)', () => {
+    // Fresh tokens each run: the result is memoized per token.
+    const stamp = String.fromCharCode(97 + (Date.now() % 26));
+    const mash = `${stamp}${'a'.repeat(4999)}`;
+    const words = `${stamp}${'withdrawalpendingdepositbonus'.repeat(200)}`;
+    const started = performance.now();
+    expect(correctTypo(mash)).toBeNull();
+    expect(correctTypo(words)).toBeNull();
+    expect(conceptIdsOf(`hi ${'q'.repeat(8000)} where is my withdrawl`).has('withdrawal')).toBe(true);
+    expect(performance.now() - started).toBeLessThan(20);
+  });
+
+  it('keeps a message full of distinct long-ish tokens cheap', () => {
+    const letters = 'abcdefghijklmnopqrstuvwxyz';
+    const tokens = Array.from({ length: 500 }, (_, i) => `z${letters[i % 26]}${letters[Math.floor(i / 26) % 26]}${'q'.repeat(12)}`);
+    const started = performance.now();
+    conceptIdsOf(tokens.join(' '));
+    expect(performance.now() - started).toBeLessThan(50);
   });
 });

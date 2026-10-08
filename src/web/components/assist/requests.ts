@@ -15,11 +15,18 @@ export function sendEvent(event: UsageEventInput): Promise<void> {
   );
 }
 
-/** Record a copied reply (the server bumps use counts), then refresh the macro list in the background. */
+/**
+ * Record a copied reply. The server bumps the macros' use counts; once it confirmed, the same bump is applied to
+ * the local list (no full library refetch: only useCount/lastUsedAt of these macros changed).
+ */
 export function recordCopy(event: Omit<UsageEventInput, 'type'>): void {
-  void sendEvent({ type: 'reply_copied', ...event })
-    .then(() => actions.refreshMacros())
-    .catch(() => undefined);
+  const ids = event.macroIds ?? [];
+  void api('POST /api/events', { body: { type: 'reply_copied', ...event } }).then(
+    () => {
+      if (ids.length) actions.recordUse(ids, new Date().toISOString());
+    },
+    () => undefined,
+  );
 }
 
 /** True when a request was cancelled by an AbortController (superseded input). */

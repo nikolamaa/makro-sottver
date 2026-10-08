@@ -5,7 +5,7 @@ import { toast } from '../../ui';
 import { assistReducer, INITIAL_ASSIST_STATE, NEW_MACRO_DRAFT_KEY, type AssistAction, type AssistState } from './assistState';
 import { shouldAdoptClipboard } from './clipboard';
 import { IDLE_RERANK } from './rerank';
-import { draftFixture, personalizeFixture, recommendationFixture, rerankFixture, resultFixture } from './testFixtures';
+import { draftFixture, macroFixture, personalizeFixture, recommendationFixture, rerankFixture, resultFixture } from './testFixtures';
 import { createAssistActions, RERANK_DELAY_MS, scheduleRerank, shouldRerank } from './useAssist';
 
 vi.mock('../../ui', async (importOriginal) => ({ ...(await importOriginal<typeof import('../../ui')>()), toast: vi.fn() }));
@@ -56,7 +56,7 @@ beforeEach(() => {
     },
   });
   vi.stubGlobal('sessionStorage', { setItem: (k: string, v: string) => storage.set(k, v) });
-  setState({ health: health(false), page: 'assist' });
+  setState({ health: health(false), page: 'assist', macros: [] });
 });
 
 afterEach(() => {
@@ -99,14 +99,30 @@ function toastTexts(): string[] {
 }
 
 describe('copy', () => {
-  it('copies, records the event without customer text, then refreshes macros', async () => {
+  it('copies, records the event without customer text, then bumps the use count locally (no library refetch)', async () => {
+    setState({ macros: [macroFixture('a', 4), macroFixture('b', 1)] });
     const { actions } = setup(withReply('Hi Marko, your withdrawal is pending.'));
     await actions.copy();
     expect(clipboardWrites).toEqual(['Hi Marko, your withdrawal is pending.']);
     expect(toastTexts()).toContain('Copied');
-    await vi.waitFor(() => expect(calls.map((c) => c.route)).toContain('GET /api/macros'));
+    await vi.waitFor(() => expect(getState().macros.find((m) => m.id === 'a')?.useCount).toBe(5));
+    expect(getState().macros.find((m) => m.id === 'a')?.lastUsedAt).not.toBeNull();
+    expect(getState().macros.find((m) => m.id === 'b')).toMatchObject({ useCount: 1, lastUsedAt: null });
+    expect(calls.map((c) => c.route)).not.toContain('GET /api/macros');
     expect(eventBodies()).toEqual([{ type: 'reply_copied', macroIds: ['a'], editRatio: 0, mode: 'fast', rank: 0, confidence: 82 }]);
     expect(JSON.stringify(eventBodies())).not.toContain('Marko');
+  });
+
+  it('leaves the local use count alone when the server did not record the copy', async () => {
+    setState({ macros: [macroFixture('a', 4)] });
+    routes['POST /api/events'] = () => {
+      throw new Error('offline');
+    };
+    const { actions } = setup(withReply('Hi Marko, your withdrawal is pending.'));
+    await actions.copy();
+    await vi.waitFor(() => expect(eventBodies()).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(getState().macros[0]?.useCount).toBe(4);
   });
 
   it('remembers the copied reply so clipboard auto-read never loads it as the next customer message', async () => {
@@ -222,12 +238,23 @@ describe('AI double-check', () => {
     await vi.advanceTimersByTimeAsync(RERANK_DELAY_MS - 1);
     expect(calls).toEqual([]);
     await vi.advanceTimersByTimeAsync(1);
-    expect(calls).toEqual([{ route: 'POST /api/rerank', body: { message: MESSAGE } }]);
+    expect(calls).toEqual([{ route: 'POST /api/rerank', body: { message: MESSAGE, variables: {} } }]);
     await vi.waitFor(() => expect(types).toEqual(['rerankStarted', 'reranked']));
     expect(ref.current.rerank).toMatchObject({ status: 'done', topId: 'b' });
     expect(ref.current.result?.recommendations.map((r) => r.macroId)).toEqual(['a', 'b', 'c']);
     expect(ref.current.selectedIds).toEqual(['a']);
     expect(ref.current.reply.text).toBe('Fast text');
+  });
+
+  it('sends the agent-entered variables as they are when the request goes out (pseudonymized by the server)', async () => {
+    vi.useFakeTimers();
+    routes['POST /api/rerank'] = () => aiAnswer;
+    const { dispatch } = store(withReply('Fast text'));
+    let variables: Record<string, string> = {};
+    scheduleRerank(MESSAGE, dispatch, RERANK_DELAY_MS, () => variables);
+    variables = { user: 'Jovana', eta_time: '24 hours' };
+    await vi.advanceTimersByTimeAsync(RERANK_DELAY_MS);
+    expect(calls).toEqual([{ route: 'POST /api/rerank', body: { message: MESSAGE, variables: { user: 'Jovana', eta_time: '24 hours' } } }]);
   });
 
   it('sends nothing when cancelled before the delay', async () => {

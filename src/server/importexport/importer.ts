@@ -31,8 +31,9 @@ const BYTES_PER_MB = 1024 * 1024;
  * Invalid intents are dropped (reported in errors). Empty title or body -> error for that block, skipped.
  * duplicateOf is set when an existing macro has the same normalized title (case/whitespace-insensitive).
  *
- * Content above 2 MB or with more than 5000 macros is rejected as a whole (no items, one error).
- * Bodies from MacroPilot's own export format are taken verbatim (no Intercom conversion).
+ * Content above 30 MB or with more than 20000 macros is rejected as a whole (no items, one error).
+ * Bodies from MacroPilot's own export format are taken verbatim (no Intercom conversion); its archived and
+ * favorite flags and category colors are carried on the items (see ImportItem).
  */
 export function parseImport(format: ImportFormat, content: string, existing: Pick<Macro, 'id' | 'title'>[]): ImportPreview {
   const sizeError = contentSizeError(content);
@@ -108,7 +109,7 @@ function readSource(format: ImportFormat, text: string, log: ProblemLog): Source
 function contentSizeError(content: string): string | null {
   const bytes = Buffer.byteLength(content, 'utf8');
   if (bytes <= IMPORT_LIMITS.maxContentBytes) return null;
-  // Round up so content just over the limit never reads as "2.0 MB; the maximum is 2 MB".
+  // Round up so content just over the limit never reads as "30.0 MB; the maximum is 30 MB".
   const mb = (Math.ceil((bytes / BYTES_PER_MB) * 10) / 10).toFixed(1);
   return `The content is too large (${mb} MB); the maximum is ${IMPORT_LIMITS.maxContentBytes / BYTES_PER_MB} MB. Split it into smaller files.`;
 }

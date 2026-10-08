@@ -93,7 +93,7 @@ async function call<T = unknown>(method: InjectOptions['method'], url: string, p
     method,
     url,
     payload: payload as InjectOptions['payload'],
-    headers: { host: `127.0.0.1:${PORT}`, [API_CLIENT_HEADER]: '1' },
+    headers: { host: `127.0.0.1:${PORT}`, [API_CLIENT_HEADER]: rt.accessToken },
   });
   return { status: res.statusCode, body: JSON.parse(res.body) as T };
 }
@@ -209,6 +209,33 @@ describe('POST /api/rerank', () => {
     expect(fake.requests).toHaveLength(0);
   });
 
+  it('pseudonymizes self-introduced names, IBANs, cards, dates of birth, documents and addresses', async () => {
+    const message =
+      "Hi, I'm Jovana Petrovic. My BTC withdrawal has been pending for 2 days, where is it? My DOB is 14/03/1991. " +
+      'Send it to IBAN DE89370400440532013000 or card 4111 1111 1111 1111. ' +
+      'For KYC: 221B Baker Street, London NW1 6XE, passport no. X1234567.';
+    fake.answer = (ids) => ids.map((id, i) => ({ id, confidence: 90 - i * 10, reason: `For ⟦NAME_1⟧, born ⟦DOB_1⟧ #${i}` }));
+    const res = await rerank(message);
+    expect(res.body.aiUsed).toBe(true);
+    const user = fake.requests[0]!.user;
+    for (const secret of ['Jovana', 'Petrovic', '14/03/1991', 'DE89370400440532013000', '4111 1111 1111 1111', 'Baker Street', 'NW1 6XE', 'X1234567']) {
+      expect(user).not.toContain(secret);
+    }
+    expect(user).toContain('BTC withdrawal has been pending for 2 days');
+    expect(res.body.recommendations[0]!.reason).toBe('For Jovana Petrovic, born 14/03/1991 #0');
+  });
+
+  it('pseudonymizes the agent-entered variables (customer name) the detectors cannot find', async () => {
+    const message = 'hello, jovana writing again. Jovana is the name on my account, my BTC withdrawal has been pending for 2 days';
+    fake.answer = (ids) => ids.map((id, i) => ({ id, confidence: 90 - i * 10, reason: `Fits ⟦NAME_1⟧ #${i}` }));
+    const res = await call<RerankResponse>('POST', '/api/rerank', { message, variables: { user: 'Jovana', eta_time: '24 hours' } });
+    expect(res.status).toBe(200);
+    expect(res.body.aiUsed).toBe(true);
+    expect(fake.requests[0]!.user).not.toContain('Jovana');
+    expect(fake.requests[0]!.user).toContain('⟦NAME_1⟧ is the name on my account');
+    expect(res.body.recommendations[0]!.reason).toBe('Fits Jovana #0');
+  });
+
   it('sends the message as is when pseudonymization is off', async () => {
     await settings({ ai: { pseudonymize: false } });
     await rerank();
@@ -244,7 +271,7 @@ describe('POST /api/rerank over a real connection', () => {
       port,
       path: '/api/rerank',
       method: 'POST',
-      headers: { host: `127.0.0.1:${PORT}`, [API_CLIENT_HEADER]: '1', 'content-type': 'application/json' },
+      headers: { host: `127.0.0.1:${PORT}`, [API_CLIENT_HEADER]: rt.accessToken, 'content-type': 'application/json' },
     });
     const body = new Promise<RerankResponse>((resolve, reject) => {
       req.on('error', reject);

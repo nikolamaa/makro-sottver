@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { useAccessDenied } from './access';
 import { actions, useStore, type Page } from './store';
 import { comboLabel, useHotkeys } from './hotkeys';
 import { Badge, Kbd, Spinner, Toaster } from './ui';
@@ -25,7 +26,41 @@ function useTheme() {
   }, [theme]);
 }
 
+/** Shown instead of the whole app when the API rejects the access token (opened without the launcher link). */
+function AccessScreen() {
+  return (
+    <div className="app">
+      <main className="main">
+        <div className="center">
+          <div className="panel stack" style={{ maxWidth: 520 }} role="alert">
+            <div className="brand">
+              <span className="brand-mark" aria-hidden>
+                M
+              </span>
+              MacroPilot
+            </div>
+            <p>
+              Open MacroPilot from the launcher (<code>MacroPilot.cmd</code> / <code>macropilot.sh</code>) or use the link
+              shown in its console window.
+            </p>
+            <p className="muted small">
+              Only that link opens your library, so other users and web pages on this computer cannot. This browser
+              remembers it after the first time.
+            </p>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
+
 export function App() {
+  const accessDenied = useAccessDenied();
+  if (accessDenied) return <AccessScreen />;
+  return <MainApp />;
+}
+
+function MainApp() {
   const page = useStore((s) => s.page);
   const loaded = useStore((s) => s.loaded);
   const loadError = useStore((s) => s.loadError);

@@ -1,8 +1,11 @@
 /**
  * Pseudonymization of personal data before text is sent to a cloud LLM, and restoration afterwards.
- * Pure functions, no I/O. Tokens use U+27E6/U+27E7 brackets: ⟦EMAIL_1⟧, ⟦NAME_1⟧, ⟦TX_HASH_1⟧ ...
+ * Pure functions, no I/O. Tokens use U+27E6/U+27E7 brackets: ⟦EMAIL_1⟧, ⟦NAME_1⟧, ⟦TX_HASH_1⟧, ⟦IBAN_1⟧ ...
+ * Besides the analyzer's entities, the built-in PII scrubber (piiScrubber.ts) finds self-introduced names, IBANs,
+ * card numbers, dates of birth, document numbers, street addresses and phone numbers.
  */
 import type { Entity, EntityType } from '../../shared/types.js';
+import { findPii, type PiiKind, type PiiMatch } from './piiScrubber.js';
 import { boundedPattern } from './text.js';
 
 export interface Pseudonymized {
@@ -74,25 +77,75 @@ function replaceValues(text: string, valueToToken: Map<string, string>): string 
   return text.replace(re, (match) => valueToToken.get(match) ?? match);
 }
 
+/** Scrubber kinds that are more specific than an analyzer phone entity covering the same digits. */
+const OVERRIDES_PHONE: ReadonlySet<PiiKind> = new Set<PiiKind>(['IBAN', 'CARD', 'DOB', 'DOC_ID', 'ADDRESS']);
+/** Scrubber kinds made only of digits, which an analyzer amount ("4222222222222 USDT") explains better. */
+const DIGIT_KINDS: ReadonlySet<PiiKind> = new Set<PiiKind>(['CARD', 'PHONE']);
+
+/** A value to register: an analyzer entity or a scrubber match. */
+interface Finding {
+  type: string;
+  values: string[];
+  start: number;
+  /** Lower first among findings with the same start (a scrubber card number before the phone entity it equals). */
+  rank: number;
+}
+
+function covers(e: Entity, m: PiiMatch): boolean {
+  return e.start <= m.start && m.end <= e.end;
+}
+
+/**
+ * Scrubber findings the analyzer's entities do not already explain. A finding that lies inside a tokenized entity
+ * is dropped (the entity is replaced anyway), except a specific kind (card, IBAN...) inside a phone entity; a
+ * card/phone-looking number the analyzer read as an amount stays readable.
+ */
+function uncoveredPii(text: string, entities: Entity[]): PiiMatch[] {
+  return findPii(text).filter(
+    (m) =>
+      !entities.some(
+        (e) =>
+          covers(e, m) &&
+          ((ENTITY_TOKEN_TYPES[e.type] !== undefined && !(e.type === 'phone' && OVERRIDES_PHONE.has(m.kind))) ||
+            (e.type === 'amount' && DIGIT_KINDS.has(m.kind))),
+      ),
+  );
+}
+
 /**
  * Replace personal data with stable tokens before text goes to a cloud LLM: entities of type email, username,
- * name, phone, tx_hash, crypto_address, bet_id, plus personal values in `knownValues` (user/name -> NAME,
+ * name, phone, tx_hash, crypto_address, bet_id; what the built-in PII scrubber finds (self-introduced names
+ * -> NAME, IBAN, CARD, DOB, DOC_ID, street ADDRESS, PHONE); plus personal values in `knownValues` (user/name -> NAME,
  * email -> EMAIL, username -> USERNAME, phone, tx_hash, bet_id, crypto_address; non-empty values >= 2 chars).
+ * `extraTexts` are other customer-derived texts (free-text variable values, detected questions): the scrubber's
+ * findings in them are added to the mapping too, so applyPseudonyms() tokenizes them.
  * Same value -> same token. Tokens look like ⟦EMAIL_1⟧, ⟦NAME_1⟧, ⟦TX_HASH_1⟧. Amounts/currencies are kept.
  * Values are matched case-sensitively and exactly (with word boundaries), longest first, all occurrences.
  * The mapping also contains known values that do not occur in `text`, so callers can tokenize them elsewhere
  * (see applyPseudonyms).
  */
-export function pseudonymize(text: string, entities: Entity[], knownValues: Record<string, string> = {}): Pseudonymized {
+export function pseudonymize(
+  text: string,
+  entities: Entity[],
+  knownValues: Record<string, string> = {},
+  extraTexts: readonly string[] = [],
+): Pseudonymized {
   const registry = new TokenRegistry();
-  for (const entity of [...entities].sort((a, b) => a.start - b.start)) {
-    const type = ENTITY_TOKEN_TYPES[entity.type];
-    if (type) registry.add(type, text.includes(entity.raw) ? [entity.raw, entity.value] : [entity.value, entity.raw]);
-  }
+  const tokenized = entities.filter((e) => ENTITY_TOKEN_TYPES[e.type] !== undefined);
+  const findings: Finding[] = tokenized.map((entity) => ({
+    type: ENTITY_TOKEN_TYPES[entity.type] ?? '',
+    values: text.includes(entity.raw) ? [entity.raw, entity.value] : [entity.value, entity.raw],
+    start: entity.start,
+    rank: 1,
+  }));
+  for (const m of uncoveredPii(text, entities)) findings.push({ type: m.kind, values: [m.value], start: m.start, rank: 0 });
+  findings.sort((a, b) => a.start - b.start || a.rank - b.rank);
+  for (const finding of findings) registry.add(finding.type, finding.values);
   for (const [key, value] of Object.entries(knownValues)) {
     const type = KNOWN_VALUE_TOKEN_TYPES[key.toLowerCase()];
     if (type && typeof value === 'string') registry.add(type, [value]);
   }
+  for (const extra of extraTexts) for (const m of findPii(extra)) registry.add(m.kind, [m.value]);
   return { text: replaceValues(text, registry.byValue), mapping: registry.mapping };
 }
 

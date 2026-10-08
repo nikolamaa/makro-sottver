@@ -1,5 +1,7 @@
 /**
  * Settings > Security: where the master key lives, data folder, recovery key status and rotation.
+ * A new recovery key stays pending on the server (shown again by "Show recovery key" / the start-up dialog) until
+ * the agent confirms it was saved, which calls POST /api/security/recovery-key/ack.
  */
 import { useCallback, useEffect, useState } from 'react';
 import type { SecurityStatus } from '../../../shared/types';
@@ -36,6 +38,7 @@ export function SecuritySection() {
   const [rotating, setRotating] = useState(false);
   const [newKey, setNewKey] = useState<string | null>(null);
   const [newKeySaved, setNewKeySaved] = useState(false);
+  const [confirming, setConfirming] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -74,14 +77,27 @@ export function SecuritySection() {
     }
   };
 
+  /** Close without confirming: the key stays pending and can be shown again until it is confirmed. */
   const closeNewKey = useCallback(() => {
-    if (!newKeySaved) {
-      toast('Save the new recovery key first - it will not be shown again. Then tick the checkbox.', 'warning', 4000);
-      return;
-    }
+    if (confirming) return;
     setNewKey(null);
-    toast('New recovery key is active', 'success');
-  }, [newKeySaved]);
+    toast('The new recovery key is not confirmed yet. "Show recovery key" shows it again until you confirm it.', 'warning', 6000);
+  }, [confirming]);
+
+  const confirmNewKey = async () => {
+    if (!newKeySaved || confirming) return;
+    setConfirming(true);
+    try {
+      await api('POST /api/security/recovery-key/ack');
+      setNewKey(null);
+      notifySecurityChanged();
+      toast('New recovery key confirmed', 'success');
+    } catch (err) {
+      toast(errorMessage(err), 'danger');
+    } finally {
+      setConfirming(false);
+    }
+  };
 
   const copyDir = async () => {
     if (!status) return;
@@ -167,9 +183,20 @@ export function SecuritySection() {
         <div className="ob">
           <p>A new recovery key replaces the current one:</p>
           <ul className="ob-points">
-            <li>The old key stops working for new backups and can no longer recover this library.</li>
-            <li>Backups you made earlier still open only with the old key - keep it until you have made a fresh backup.</li>
-            <li>The new key is shown once. Have your password manager ready.</li>
+            <li>
+              From now on, <code>npm run recover</code> and new encrypted backups need the new key. The old key does not
+              open them.
+            </li>
+            <li>
+              The encryption key of your library stays the same, so backups made earlier (and old copies of the data
+              folder) still open with the old key. Keep the old key until you have made a fresh backup.
+            </li>
+            <li>
+              It does not shut out an old key that has already leaked: together with an older backup or an old copy of
+              the data folder, the old key still reveals the library&apos;s encryption key, which also opens backups made
+              later. If that happened, delete old backups and old copies of the data folder after making a new backup.
+            </li>
+            <li>Have your password manager ready. The new key is shown until you confirm that you saved it.</li>
           </ul>
         </div>
       </Modal>
@@ -179,14 +206,23 @@ export function SecuritySection() {
         title="Your new recovery key"
         onClose={closeNewKey}
         footer={
-          <Button variant="primary" onClick={closeNewKey} disabled={!newKeySaved}>
-            Done
-          </Button>
+          <>
+            <Button variant="ghost" onClick={closeNewKey} disabled={confirming}>
+              Later
+            </Button>
+            <Button variant="primary" onClick={() => void confirmNewKey()} disabled={!newKeySaved || confirming}>
+              {confirming ? <Spinner label="Saving" /> : null}
+              Done
+            </Button>
+          </>
         }
       >
         {newKey ? (
           <div className="ob">
-            <p>Store this key in your password manager now. It will not be shown again.</p>
+            <p>
+              Store this key in your password manager now. Until you confirm below, &quot;Show recovery key&quot; in
+              Settings &gt; Security shows it again; after that nobody, not even MacroPilot, can show it again.
+            </p>
             <RecoveryKeyDisplay recoveryKey={newKey} autoFocus />
             <p className="ob-warning">Tip: make a new encrypted backup (Import / Export page) so your latest backup matches this key.</p>
             <label className="ob-confirm">
