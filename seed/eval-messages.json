@@ -1,0 +1,560 @@
+[
+  {
+    "message": "hey i deposited 0.05 eth like 2 hours ago and its still not in my balance?? where is it",
+    "expected": "Crypto deposit pending / not credited yet",
+    "intent": "deposit_missing",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "my ltc deposit says pending, how long does it take? and where do i find the tx hash, my wallet just shows a bunch of stuff",
+    "expected": "Crypto deposit pending / not credited yet",
+    "intent": "deposit_missing",
+    "sentiment": "confused"
+  },
+  {
+    "message": "I sent 500 USDT over the Base network and NOTHING arrived. this is ridiculous, I want it credited right now",
+    "expected": "Deposit sent on wrong network or unsupported coin/token",
+    "intent": "deposit_missing",
+    "sentiment": "angry"
+  },
+  {
+    "message": "hi, sent 120 xrp but forgot to add the memo tag. can you help get it back?",
+    "expected": "XRP/EOS deposit missing MEMO/TAG",
+    "intent": "deposit_missing",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "how do i deposit usdt? which network should i choose and is there a max deposit limit",
+    "expected": "How to deposit crypto and supported networks",
+    "intent": "deposit_help",
+    "sentiment": "confused"
+  },
+  {
+    "message": "my upi deposit of 5000 inr is pending since yesterday, money left my bank. how can i escalate it??",
+    "expected": "INR deposit pending - how to escalate (Enquire Now)",
+    "intent": "deposit_missing",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "thanks guys, deposit arrived! quick q - how long does swapping btc to ltc take in the wallet?",
+    "expected": "NONE",
+    "intent": "general",
+    "sentiment": "positive"
+  },
+  {
+    "message": "This is a joke. I withdrew 0.08 BTC over 3 hours ago and there is NOTHING in my wallet. Where is my money???",
+    "expected": "Crypto Withdrawal Pending or Not Received",
+    "intent": "withdrawal_pending",
+    "sentiment": "angry"
+  },
+  {
+    "message": "hey whats the minimum withdraw for USDT? and also which network do i pick, my wallet address starts with T",
+    "expected": "Crypto Withdrawal Limits and Fees",
+    "intent": "withdrawal_limits",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "i deposited 200 usdt and want it back but it says wager requirement?? i didnt even play anything, why cant i withdraw MY own money",
+    "expected": "Deposit Wager Requirement Before Withdrawal",
+    "intent": "wagering_requirement",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "made my account with google and now when i try to withdraw it says re-verify with google... what does that mean, is my account hacked?",
+    "expected": "OAuth Re-Verification for Social Login Withdrawals",
+    "intent": "withdrawal_help",
+    "sentiment": "confused"
+  },
+  {
+    "message": "hi, first time withdrawing. how do i send my usdt to trust wallet? not sure what to choose",
+    "expected": "How to Withdraw Crypto and USDT (Network and Address)",
+    "intent": "withdrawal_help",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "is there a max on how much i can withdraw in one go? want to take out my whole balance",
+    "expected": "Crypto Withdrawal Limits and Fees",
+    "intent": "withdrawal_limits",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "thanks for the help earlier! quick one - do my football bets count toward the wager thing as soon as i place them?",
+    "expected": "Deposit Wager Requirement Before Withdrawal",
+    "intent": "wagering_requirement",
+    "sentiment": "positive"
+  },
+  {
+    "message": "how can i see my balance in euros instead of btc in the wallet?",
+    "expected": "NONE",
+    "intent": "general",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "hey, every time i try to deposit in my local money it says Payments Temporarily Unavailable. what does that even mean?",
+    "expected": "Payments Temporarily Unavailable - Local Currency Not Supported",
+    "intent": "payment_methods",
+    "sentiment": "confused"
+  },
+  {
+    "message": "I sent 300 euros by bank transfer more than a day ago and its STILL not in my account. this is ridiculous, where is my money??",
+    "expected": "Bank Transfer Deposit Not Credited - Request Proof of Payment",
+    "intent": "deposit_missing",
+    "sentiment": "angry"
+  },
+  {
+    "message": "my withdrawal has been on pending since tuesday... how long do bank withdrawals usually take?",
+    "expected": "Bank Transfer Withdrawal Pending - Up to 3 Business Days",
+    "intent": "withdrawal_pending",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "why cant I withdraw?? it keeps telling me please wager before withdrawing but I only want my own deposit back",
+    "expected": "Please Wager Before Withdrawing - 100% Fiat Deposit Rule",
+    "intent": "wagering_requirement",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "hi, how do i deposit with my mastercard? and btw do i have to wager my deposit before i can withdraw it?",
+    "expected": "Local Currency Card Deposit (Visa/Mastercard) - How To and Missing Option",
+    "intent": "payment_methods",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "thanks for the help earlier! quick one - is a visa deposit instant or does it take a while to show up?",
+    "expected": "Local Currency Card Deposit (Visa/Mastercard) - How To and Missing Option",
+    "intent": "deposit_help",
+    "sentiment": "positive"
+  },
+  {
+    "message": "can you tell me what documents i need for level 2 verification? also how long does the review take",
+    "expected": "NONE",
+    "intent": "kyc_verification",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "where is my monthly bonus?? its almost the 20th and i got nothing, my friend got his days ago",
+    "expected": "Monthly Bonus - Not Received / Release Timing & Eligibility",
+    "intent": "bonus_inquiry",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "why was my monthly bonus so small this time? last month it was way bigger and i had a bad month",
+    "expected": "Monthly Bonus - How the Amount Is Calculated",
+    "intent": "bonus_inquiry",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "this is a joke. I missed ONE reload claim because I was asleep and now its just gone?? give it back right now",
+    "expected": "Reload - Missed Claim, Claim Rules & Expiry",
+    "intent": "complaint",
+    "sentiment": "angry"
+  },
+  {
+    "message": "what time does the weekly bonus drop on saturday? and do I have to wager it before I can withdraw?",
+    "expected": "Weekly Bonus - When It's Sent & How to Claim",
+    "intent": "bonus_inquiry",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "telegram is blocked in my country, how am i supposed to get the weekly bonus link",
+    "expected": "Weekly Bonus - When It's Sent & How to Claim",
+    "intent": "bonus_inquiry",
+    "sentiment": "confused"
+  },
+  {
+    "message": "hey i was on vacation and didnt claim weekly bonuses for like 3 weeks, are they lost forever?",
+    "expected": "Weekly Bonus - Missed / Unclaimed Bonuses",
+    "intent": "bonus_inquiry",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "Hi! my monthly bonus came as a reload not a coupon, how many days is it active? also will there be a pre-monthly this month?",
+    "expected": "Reload - Missed Claim, Claim Rules & Expiry",
+    "intent": "bonus_inquiry",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "how do i turn on 2fa on my account",
+    "expected": "NONE",
+    "intent": "account_security",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "this is ridiculous. deposited 150 usd, got the welcome bonus and now my withdrawal got DENIED twice. its MY money why cant i take it out??",
+    "expected": "Active deposit bonus requirement - withdrawal or tip blocked",
+    "intent": "wagering_requirement",
+    "sentiment": "angry"
+  },
+  {
+    "message": "tried the drop code from the daily drops telegram and it keeps saying the bonus cannot be found or is unavailable. i literally copy pasted it",
+    "expected": "Bonus Drop code error messages explained",
+    "intent": "bonus_inquiry",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "hey, made my account yesterday evening but forgot to put in the affiliate code from my streamer. can i still add it somewhere?",
+    "expected": "Welcome offer / affiliate code - 24 hour window and rakeback",
+    "intent": "bonus_inquiry",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "my birthday was on sunday and i got nothing, not even an email. what do i need to get the birthday bonus?",
+    "expected": "Birthday bonus - eligibility and how it is sent",
+    "intent": "bonus_inquiry",
+    "sentiment": "confused"
+  },
+  {
+    "message": "two things: why can't I tip my mate right now, it says I have an active bonus requirement? and also where do you post drop codes?",
+    "expected": "Active deposit bonus requirement - withdrawal or tip blocked",
+    "intent": "wagering_requirement",
+    "sentiment": "confused"
+  },
+  {
+    "message": "I unsubscribed from your emails a while ago by accident, how do I start getting offers again? Thanks!",
+    "expected": "Not receiving promotional emails or missed bonuses",
+    "intent": "bonus_inquiry",
+    "sentiment": "positive"
+  },
+  {
+    "message": "I claimed two weekly bonuses on the same day, did that break my bonus streak?",
+    "expected": "NONE",
+    "intent": "bonus_inquiry",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "hey how do i become vip?? what do i need for bronze",
+    "expected": "VIP Program: How to Join and Level Requirements",
+    "intent": "vip_program",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "Its saturday night and STILL no weekly bonus. and i never got the monthly email either even tho i wagered like 20k this month. what a joke honestly",
+    "expected": "VIP Weekly & Monthly Bonus: Timing and Eligibility",
+    "intent": "bonus_inquiry",
+    "sentiment": "angry"
+  },
+  {
+    "message": "im gold at 40% how much more do i need to wager to get to platinum? and also when do i get a vip host",
+    "expected": "VIP Progress: How to Calculate What's Left to the Next Level",
+    "intent": "vip_program",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "what does a vip host actually do and can i reach mine on telegram?",
+    "expected": "VIP Host: Eligibility and Contact Options",
+    "intent": "vip_program",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "my friend says he gets daily reload but im gold and i dont?? do i only get rakeback",
+    "expected": "VIP Rewards: Rakeback, Reload and Diamond Offers",
+    "intent": "vip_program",
+    "sentiment": "confused"
+  },
+  {
+    "message": "why does my vip bar move way faster when i bet on football than on slots?? confused",
+    "expected": "VIP Progress: How to Calculate What's Left to the Next Level",
+    "intent": "vip_program",
+    "sentiment": "confused"
+  },
+  {
+    "message": "thanks for the help earlier! quick one, what time exactly does the weekly boost drop?",
+    "expected": "VIP Weekly & Monthly Bonus: Timing and Eligibility",
+    "intent": "bonus_inquiry",
+    "sentiment": "positive"
+  },
+  {
+    "message": "I want to change the email address on my account, how do I do that?",
+    "expected": "NONE",
+    "intent": "account_access",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "this is ridiculous!!! lost my phone yesterday and now i cant log in because of your stupid 2fa. i have money in there, fix it NOW",
+    "expected": "Lost access to 2FA - recovery process",
+    "intent": "account_access",
+    "sentiment": "angry"
+  },
+  {
+    "message": "hey, forgot my password and the reset thing isnt working. also is noreply@mail.stake.com actually you guys? got a promo email from it",
+    "expected": "Forgot password or lost access to account email",
+    "intent": "account_access",
+    "sentiment": "confused"
+  },
+  {
+    "message": "Hi! I'd like to add 2FA before I make my next withdrawal, where do I set it up?",
+    "expected": "How to enable 2FA on your account",
+    "intent": "account_security",
+    "sentiment": "positive"
+  },
+  {
+    "message": "i want my account DELETED with all my data, not closed, deleted. why is this so hard",
+    "expected": "Account deletion request - closure and break options",
+    "intent": "account_closure",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "got an email from stake-rewards-team.net saying i need to verify my wallet within 24h or lose my balance. is this legit??",
+    "expected": "Suspicious email or link - verify official Stake channels",
+    "intent": "account_security",
+    "sentiment": "confused"
+  },
+  {
+    "message": "i signed up with an old hotmail that got deactivated, cant reset my pw now. what do i do",
+    "expected": "Forgot password or lost access to account email",
+    "intent": "account_access",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "what is stake shield and does it work on a 2 leg multi?",
+    "expected": "NONE",
+    "intent": "sports_betting",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "this is the 3rd time my ID got rejected!!! i uploaded a screenshot of my passport from my phone, what more do you people want from me",
+    "expected": "Proof of Identity - Accepted Documents & Photo Requirements",
+    "intent": "kyc_verification",
+    "sentiment": "angry"
+  },
+  {
+    "message": "hi, can i use my aadhaar card for verification? i only have the paper printout version",
+    "expected": "Proof of Identity - India Accepted Documents",
+    "intent": "kyc_verification",
+    "sentiment": "confused"
+  },
+  {
+    "message": "the selfie with id step keeps failing, says image blurry. ive tried like 5 times already, how am i supposed to do it",
+    "expected": "Selfie with ID - Step-by-Step Tips",
+    "intent": "kyc_verification",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "Is a mobile phone bill ok as proof of address? Also what do you need for the source of income part, I'm self employed",
+    "expected": "Proof of Address - Accepted Documents & Requirements",
+    "intent": "kyc_verification",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "compliance asked me for source of funds docs. the money came from selling my apartment last year, what exactly should i send?",
+    "expected": "Source of Income - Accepted Documents",
+    "intent": "kyc_verification",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "i live in tokyo, can i use my internet bill for the address check or does it have to be something else",
+    "expected": "Proof of Address - Accepted Documents & Requirements",
+    "intent": "kyc_verification",
+    "sentiment": "confused"
+  },
+  {
+    "message": "Hey! Uploaded all my docs yesterday, how long does verification usually take to be approved?",
+    "expected": "NONE",
+    "intent": "kyc_verification",
+    "sentiment": "positive"
+  },
+  {
+    "message": "hey how do i close my account? i just dont find it fun anymore",
+    "expected": "Account Closure - Close Your Account",
+    "intent": "account_closure",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "I lowered my deposit limit yesterday and now I want it back up and it says I have to wait 24 hours?? This is ridiculous, it's MY money, fix it now",
+    "expected": "Deposit, Loss & Wager Limits - Setup & Cooling-Off",
+    "intent": "betting_limits",
+    "sentiment": "angry"
+  },
+  {
+    "message": "can i block only the casino part for like a month but keep sports? and also can i still withdraw my balance while its blocked",
+    "expected": "Product Exclusion - Block Casino, Sportsbook or Poker Only",
+    "intent": "responsible_gambling",
+    "sentiment": "confused"
+  },
+  {
+    "message": "i lost way too much again this week. i think i have a problem and i need to stop completely, how do i lock my account for good",
+    "expected": "Self Exclusion - Indefinite Exclusion & Return to Play",
+    "intent": "responsible_gambling",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "need a break for a week, can u lock my acc? will it open again by itself after?",
+    "expected": "Break in Play - Temporary Account Break",
+    "intent": "responsible_gambling",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "pls exclude me from poker only for 3 months, i still wanna bet on football",
+    "expected": "Product Exclusion - Block Casino, Sportsbook or Poker Only",
+    "intent": "responsible_gambling",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "I self excluded about 7 months ago, what do I need to do to get my account back?",
+    "expected": "Self Exclusion - Indefinite Exclusion & Return to Play",
+    "intent": "responsible_gambling",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "what network should I use to deposit USDT, is TRC20 ok?",
+    "expected": "NONE",
+    "intent": "deposit_help",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "this is ridiculous, the game was literally played and my bet just says VOID and i got my stake back. why??? bet id is in my history",
+    "expected": "Voided Bet Explained",
+    "intent": "sports_betting",
+    "sentiment": "angry"
+  },
+  {
+    "message": "so one player in my same game multi didnt play and now the whole bet is void?? my buddy had a normal parlay with a void leg and he still got paid. how is that fair",
+    "expected": "Voided Leg in Multi vs Same Game Multi",
+    "intent": "sports_betting",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "hey, the cashout button on my player prop bet is gone now that the game started. why can't i cash out? also how do i find the bet id to send you?",
+    "expected": "Cashout Not Available",
+    "intent": "sports_betting",
+    "sentiment": "confused"
+  },
+  {
+    "message": "hi, the other agent asked me for my bet ID but i have no idea where to find it",
+    "expected": "How to Find Your Sports Bet ID",
+    "intent": "sports_betting",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "i placed $20 on over 2.75 goals, match finished 2-1 and i only got paid like half profit. is that a mistake?",
+    "expected": "Asian Total Settlement: Void and Half Win",
+    "intent": "sports_betting",
+    "sentiment": "confused"
+  },
+  {
+    "message": "tried to cash out 3 times and every time it fails, odds keep changing. this is so annoying",
+    "expected": "Cashout Not Available",
+    "intent": "sports_betting",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "can you raise my max bet limit on tennis matches please? it only lets me bet small amounts",
+    "expected": "NONE",
+    "intent": "betting_limits",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "this slot FROZE right in the middle of my bonus buy and now its just gone. i paid for that bonus, fix it NOW",
+    "expected": "Game froze / disconnected during bonus or free spins",
+    "intent": "technical_issue",
+    "sentiment": "angry"
+  },
+  {
+    "message": "hey, my wifi cut out while i had free spins going on a bgaming game.. are they lost or can i still play them?",
+    "expected": "Game froze / disconnected during bonus or free spins",
+    "intent": "technical_issue",
+    "sentiment": "confused"
+  },
+  {
+    "message": "whats the minimum bet on plinko? also why cant i type anything in the chat",
+    "expected": "Casino betting limits (min / max bet and max profit)",
+    "intent": "betting_limits",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "the evolution dealer said i need to contact stake about my baccarat round that didnt pay. what info do you need from me?",
+    "expected": "Third-party / live casino game issue (Case ID & Bet ID)",
+    "intent": "casino_games",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "lost 20 dice rolls in a row on 50% chance. this is rigged and you know it",
+    "expected": "Player says games are rigged: provable fairness",
+    "intent": "complaint",
+    "sentiment": "angry"
+  },
+  {
+    "message": "i chat every day and never get rain, what are the requirements exactly?",
+    "expected": "Stake chat access and Rain eligibility",
+    "intent": "general",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "Hi, how long does a BTC withdrawal usually take to arrive in my wallet?",
+    "expected": "NONE",
+    "intent": "withdrawal_pending",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "hey how do i become an affiliate on stake? never done anything like this before lol",
+    "expected": "Affiliate Program - How to Join",
+    "intent": "affiliate",
+    "sentiment": "positive"
+  },
+  {
+    "message": "This is ridiculous. My friend Marco signed up with MY link yesterday and he is NOT in my referrals!! I want my commission, fix this now",
+    "expected": "Affiliate Referral Not Tracked",
+    "intent": "affiliate",
+    "sentiment": "angry"
+  },
+  {
+    "message": "how exactly is commission calculated for sports bets? and also where can i see how much my referrals deposited?",
+    "expected": "Affiliate Commission Calculation",
+    "intent": "affiliate",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "i run a telegram channel with like 40k members, can i get more than the standard rate or my own code for them?",
+    "expected": "Affiliate Custom Package / Higher Commission",
+    "intent": "affiliate",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "where is my referral link?? i made an account but i cant find the campaign id anywhere",
+    "expected": "Create Affiliate Campaign & Track Stats",
+    "intent": "affiliate",
+    "sentiment": "confused"
+  },
+  {
+    "message": "i signed up through my buddys link but also typed a promo code in the box, which one counts now?",
+    "expected": "Affiliate Referral Not Tracked",
+    "intent": "affiliate",
+    "sentiment": "confused"
+  },
+  {
+    "message": "my withdrawal of 0.05 BTC has been pending for 3 hours already, whats going on?",
+    "expected": "NONE",
+    "intent": "withdrawal_pending",
+    "sentiment": "frustrated"
+  },
+  {
+    "message": "what's the weather going to be like in Belgrade tomorrow?",
+    "expected": "NONE",
+    "intent": "general",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "Can you recommend a good pizza place near me?",
+    "expected": "NONE",
+    "intent": "general",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "Who won the Eurovision song contest in 2019?",
+    "expected": "NONE",
+    "intent": "general",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "hello? is anyone there",
+    "expected": "NONE",
+    "intent": "general",
+    "sentiment": "neutral"
+  },
+  {
+    "message": "Do you guys sponsor any local chess clubs?",
+    "expected": "NONE",
+    "intent": "general",
+    "sentiment": "neutral"
+  }
+]
